@@ -1,16 +1,6 @@
-# Simple CI / 安全构建流水线
+# Simple CI
 
-这是 [Simple](https://github.com/Goose-Egg-Studio/Simple) 的公开 CI/CD 启动仓库。真正的 Unity 工程、音频和其它附属模块位于私有仓库；本仓库只公开 **GitHub Actions 启动流程、age 加密的构建辅助脚本及使用文档**。
-
-> **安全边界**：公开工作流可读；构建脚本仅以 `.age` 密文保存；任何许可证、GitHub App 私钥、Android 签名文件、Apple 证书和解密私钥均不得提交。尚未配置 Secrets 前，请勿尝试正式构建。
-
-## 基本信息
-
-- Unity **2022.3.62f3**，主仓库 `Goose-Egg-Studio/Simple`，默认 `main`。
-- Android：Ubuntu 24.04，单独构建 **APK + AAB**。
-- iOS：**macOS 26 Intel + Xcode 26.6**，先导出 Xcode 工程，按需生成签名 IPA 并上传 App Store Connect/TestFlight。
-- GitHub App 需获得主仓库及其所有私有 Git Submodule 的 `Contents: read`；检出使用 `submodules: recursive`。Unity Package Manager 负责 Git URL 形式的 UPM 依赖。
-- Android 和 iOS 分别使用 GitHub Environments 隔离 Secrets。产物通过 **age 公钥加密**；CI 不持有产物解密私钥。
+这是 [Simple](https://github.com/Goose-Egg-Studio/Simple) 的公开 CI/CD 启动仓库。
 
 ## 首次配置
 
@@ -29,7 +19,7 @@
 
 | Secret | 如何获取 |
 | --- | --- |
-| `CI_AGE_IDENTITY` | 本地 `age-keygen -o ci-age-key.txt` 生成的私钥文件全文；只用于解密 `ci/sealed/secure-ci-scripts.tar.age`；在两个 Environment 中分别配置 |
+| `CI_AGE_IDENTITY` | 本地生成的私钥文件全文；只用于解密脚本；在两个 Environment 中分别配置 |
 | `SOURCE_APP_PRIVATE_KEY` | 在 GitHub → Settings → Developer settings → GitHub Apps 中创建 App，给目标私仓及附属仓 `Contents: read`，安装至对应组织，在 App 设置页生成 PEM 私钥并将**全文**放入 Secrets |
 | `UNITY_LICENSE` | Unity 激活后提供的原始 `.ulf` 文件内容；**不用 Base64** |
 | `UNITY_EMAIL` / `UNITY_PASSWORD` / `UNITY_SERIAL` | 按 Unity 授权模式及 GameCI 需求配置；不要向公开仓库上传账号或授权材料 |
@@ -91,5 +81,3 @@ tar -xf output.tar
 - 禁止未经审查的 PR 代码在能够取得 Environment Secrets 的 Job 运行。
 - 固定和定期审核第三方 Actions；确保能修改默认分支和工作流的人员可信。
 - 不要把 `Library/`、明文构建产物、调试日志或本地密钥加入公开 Git 历史；`.gitignore` 不能代替人工审计。
-- 首次构建仍需检查 Unity/GameCI 授权、磁盘空间、macOS 26 / Xcode 26.6 和 Apple 签名的实际兼容性。
-- 当前公开 CI 文件只完成静态安全检查，**尚未在 GitHub Runner 完成端到端构建验证**。
