@@ -1,0 +1,153 @@
+name: Unity Android — encrypted scripts & artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: 'Private source tag, branch or commit (commit SHA recommended)'
+        type: string
+        required: true
+        default: main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unity-android-${{ inputs.source_ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' &&
+        github.ref_name == github.event.repository.default_branch &&
+        github.repository == vars.CI_REPOSITORY &&
+        vars.SOURCE_REPOSITORY == 'Goose-Egg-Studio/Simple' &&
+        contains(fromJSON(vars.ALLOWED_BUILD_ACTORS || '[]'), github.actor) &&
+        contains(fromJSON(vars.ALLOWED_BUILD_ACTORS || '[]'), github.triggering_actor)
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    environment: android-build
+    steps:
+      - name: Checkout public launcher and encrypted scripts
+        uses: actions/checkout@v4
+        with:
+          path: ci
+          persist-credentials: false
+
+      - name: Install crypto tools
+        shell: bash
+        run: |-
+          sudo apt-get update -qq && sudo apt-get install -y -qq age
+
+      - name: Unlock sealed CI scripts
+        shell: bash
+        env:
+          CI_AGE_IDENTITY: ${{ secrets.CI_AGE_IDENTITY }}
+        run: |-
+          set -euo pipefail
+          umask 077
+          KEY="$RUNNER_TEMP/age-ci-key"
+          TAR="$RUNNER_TEMP/ci-code.tar.gz"
+          trap 'rm -f "$KEY" "$TAR"' EXIT
+          test -n "$CI_AGE_IDENTITY"
+          printf '%s\n' "$CI_AGE_IDENTITY" > "$KEY"
+          mkdir -p "$RUNNER_TEMP/secure-ci"
+          age -d -i "$KEY" -o "$TAR" ci/ci/sealed/secure-ci-scripts.tar.age
+          tar -xzf "$TAR" -C "$RUNNER_TEMP/secure-ci"
+          test -x "$RUNNER_TEMP/secure-ci/scripts/check-version.sh"
+          echo 'Encrypted CI implementation unlocked.'
+
+      - name: Create read-only GitHub App token for private source and submodules
+        id: source-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.SOURCE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SOURCE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          permission-contents: read
+
+      - name: Checkout private Unity project and recursive private submodules
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.SOURCE_REPOSITORY }}
+          ref: ${{ inputs.source_ref }}
+          token: ${{ steps.source-token.outputs.token }}
+          path: project
+          submodules: recursive
+          lfs: true
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Complete nested Git LFS downloads
+        shell: bash
+        env:
+          SOURCE_READ_TOKEN: ${{ steps.source-token.outputs.token }}
+        run: bash "$RUNNER_TEMP/secure-ci/scripts/finalize-checkout.sh" project
+
+      - name: Validate Simple source, scenes and submodules
+        shell: bash
+        run: bash "$RUNNER_TEMP/secure-ci/scripts/validate-simple.sh" project
+
+      - name: Enforce Unity version 2022.3.62f3
+        shell: bash
+        run: bash "$RUNNER_TEMP/secure-ci/scripts/check-version.sh" project 2022.3.62f3
+
+      - name: Build release APK
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+        with:
+          projectPath: project
+          unityVersion: 2022.3.62f3
+          targetPlatform: Android
+          buildsPath: build-apk
+          versioning: None
+          androidExportType: androidPackage
+          androidKeystoreName: release.keystore
+          androidKeystoreBase64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          androidKeystorePass: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+          androidKeyaliasName: ${{ secrets.ANDROID_KEYALIAS_NAME }}
+          androidKeyaliasPass: ${{ secrets.ANDROID_KEYALIAS_PASS }}
+
+      - name: Build release AAB
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+        with:
+          projectPath: project
+          unityVersion: 2022.3.62f3
+          targetPlatform: Android
+          buildsPath: build-aab
+          versioning: None
+          androidExportType: androidAppBundle
+          androidKeystoreName: release.keystore
+          androidKeystoreBase64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          androidKeystorePass: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+          androidKeyaliasName: ${{ secrets.ANDROID_KEYALIAS_NAME }}
+          androidKeyaliasPass: ${{ secrets.ANDROID_KEYALIAS_PASS }}
+
+      - name: Stage APK and AAB locally
+        shell: bash
+        run: bash "$RUNNER_TEMP/secure-ci/scripts/stage-android.sh"
+
+      - name: Encrypt build outputs using public age recipient
+        shell: bash
+        run: bash "$RUNNER_TEMP/secure-ci/scripts/pack.sh" dist "encrypted/android-${{ github.run_id }}.tar.age" ci/ci/artifact-recipient.txt
+
+      - name: Upload encrypted artifact only
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-sealed-${{ github.run_id }}
+          path: encrypted/*.tar.age
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
