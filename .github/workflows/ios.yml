@@ -85,10 +85,24 @@ jobs:
           tar -xzf "$TMP" -C "$RUNNER_TEMP/secure-ci" > "$RUNNER_TEMP/simple-private-logs/ci-extract.log" 2>&1 || { echo 'sealed CI could not be extracted'; exit 1; }
           test -x "$RUNNER_TEMP/secure-ci/scripts/checkout-source.sh"
 
-      - name: Install GameCI CLI (no private source loaded yet)
-        uses: game-ci/cli@a9d35fd6cfae06bc130dcd49a48ccb8509197e38
-        with:
-          version: v0.1.48
+      - name: Install GameCI CLI privately (pinned installer)
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          ROOT="$RUNNER_TEMP/game-ci-installer"
+          LOG="$RUNNER_TEMP/simple-private-logs/gameci-install.log"
+          mkdir -p "$ROOT/scripts" "$RUNNER_TEMP/simple-private-logs"
+          {
+            curl --fail --silent --show-error --location               "https://raw.githubusercontent.com/game-ci/cli/a9d35fd6cfae06bc130dcd49a48ccb8509197e38/install.sh"               --output "$ROOT/install.sh"
+            curl --fail --silent --show-error --location               "https://raw.githubusercontent.com/game-ci/cli/a9d35fd6cfae06bc130dcd49a48ccb8509197e38/scripts/install.sh"               --output "$ROOT/scripts/install.sh"
+            export GAME_CI_VERSION="v0.1.48"
+            export GAME_CI_INSTALL="$RUNNER_TEMP/game-ci/bin"
+            sh "$ROOT/install.sh"
+            test -x "$GAME_CI_INSTALL/game-ci"
+          } >"$LOG" 2>&1 || { echo 'GameCI CLI installation failed; see encrypted diagnostics'; exit 1; }
+          echo "$RUNNER_TEMP/game-ci/bin" >> "$GITHUB_PATH"
+          echo 'GameCI CLI installed.'
 
       - name: Generate read-only source token
         id: source-token
