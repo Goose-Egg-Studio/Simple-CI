@@ -156,19 +156,19 @@ jobs:
           if [ -n "${UNITY_LICENSE_BASE64:-}" ]; then
             UNITY_LICENSE="$(
               python3 - <<'PY_LICENSE' 2>"$RUNNER_TEMP/simple-private-logs/license-prep.log"
-import base64
-import os
-import sys
-import xml.etree.ElementTree as ET
-
-try:
-    raw = base64.b64decode(os.environ["UNITY_LICENSE_BASE64"].strip(), validate=True)
-    ET.fromstring(raw)
-    sys.stdout.write(raw.decode("utf-8-sig"))
-except Exception as exc:
-    print(f"Unity license Base64 preparation failed: {type(exc).__name__}", file=sys.stderr)
-    sys.exit(1)
-PY_LICENSE
+          import base64
+          import os
+          import sys
+          import xml.etree.ElementTree as ET
+          
+          try:
+              raw = base64.b64decode(os.environ["UNITY_LICENSE_BASE64"].strip(), validate=True)
+              ET.fromstring(raw)
+              sys.stdout.write(raw.decode("utf-8-sig"))
+          except Exception as exc:
+              print(f"Unity license Base64 preparation failed: {type(exc).__name__}", file=sys.stderr)
+              sys.exit(1)
+          PY_LICENSE
             )" || { echo 'Unity license preparation failed; see encrypted diagnostics'; exit 1; }
             export UNITY_LICENSE
           fi
