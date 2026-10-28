@@ -159,6 +159,8 @@ jobs:
               mkdir -p "$RUNNER_TEMP/simple-private-logs/licensing-client"
               timeout 120s docker run --rm \
                 --env UNITY_LICENSE \
+                --env "CI_LOG_OWNER_UID=$(id -u)" \
+                --env "CI_LOG_OWNER_GID=$(id -g)" \
                 --volume "$RUNNER_TEMP/simple-private-logs/licensing-client:/ci-licensing-logs" \
                 --entrypoint /bin/bash \
                 unityci/editor:ubuntu-2022.3.62f3-android-3 \
@@ -174,6 +176,8 @@ jobs:
                       fi
                     done
                     rm -f /tmp/UnityLicenseFile.ulf
+                    # Container runs as root; return private log ownership to the host runner.
+                    chown -R "$CI_LOG_OWNER_UID:$CI_LOG_OWNER_GID" /ci-licensing-logs || true
                   }
                   trap save_licensing_logs EXIT
                   printf "%s\n" "$UNITY_LICENSE" > /tmp/UnityLicenseFile.ulf
@@ -196,6 +200,11 @@ jobs:
           umask 077
           mkdir -p "$RUNNER_TEMP/simple-private-logs" encrypted
           printf 'Finalizer started; job status: %s\n' "${{ job.status }}" >> "$RUNNER_TEMP/simple-private-logs/build-status.txt"
+          # Also repair files if Docker timed out or its EXIT trap did not complete.
+          if [ -d "$RUNNER_TEMP/simple-private-logs/licensing-client" ]; then
+            sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/simple-private-logs/licensing-client"
+            chmod -R go-rwx "$RUNNER_TEMP/simple-private-logs/licensing-client"
+          fi
           test -x "$(command -v age)" || { echo 'artifact encryption tool unavailable'; exit 1; }
           # Capture Unity's persistent Editor.log, if it exists, inside the encrypted bundle.
           for f in "$HOME/Library/Logs/Unity/Editor.log" "$HOME/.config/unity3d/Editor.log"; do
