@@ -1,10 +1,10 @@
-name: Unity Android — encrypted scripts & artifacts
+name: Unity ANDROID - sealed output and private logs
 
 on:
   workflow_dispatch:
     inputs:
       source_ref:
-        description: 'Private source tag, branch or commit (commit SHA recommended)'
+        description: 'Private source ref or commit SHA'
         type: string
         required: true
         default: main
@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: unity-android-${{ inputs.source_ref }}
+  group: simple-android-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -31,36 +31,49 @@ jobs:
     timeout-minutes: 180
     environment: android-build
     steps:
-      - name: Checkout public launcher and encrypted scripts
+      - name: Checkout public CI launcher
         uses: actions/checkout@v4
         with:
           path: ci
           persist-credentials: false
 
-      - name: Install crypto tools
+      - name: Create private log directory
         shell: bash
-        run: |-
-          sudo apt-get update -qq && sudo apt-get install -y -qq age
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/simple-private-logs"
+          printf 'Platform: android\nRun: %s\n' "$GITHUB_RUN_ID" > "$RUNNER_TEMP/simple-private-logs/build-status.txt"
 
-      - name: Unlock sealed CI scripts
+      - name: Install encryption tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq >/dev/null 2>&1 && sudo apt-get install -y -qq age >/dev/null 2>&1 || { echo 'crypto tool installation failed'; exit 1; }
+
+      - name: Unseal CI implementation
         shell: bash
         env:
           CI_AGE_IDENTITY: ${{ secrets.CI_AGE_IDENTITY }}
-        run: |-
+        run: |
           set -euo pipefail
           umask 077
-          KEY="$RUNNER_TEMP/age-ci-key"
-          TAR="$RUNNER_TEMP/ci-code.tar.gz"
-          trap 'rm -f "$KEY" "$TAR"' EXIT
-          test -n "$CI_AGE_IDENTITY"
+          KEY="$RUNNER_TEMP/simple-ci-private-age-identity"
+          TMP="$RUNNER_TEMP/simple-ci-private-scripts.tar.gz"
+          trap 'rm -f "$KEY" "$TMP"' EXIT
+          test -n "$CI_AGE_IDENTITY" || { echo 'CI identity missing'; exit 1; }
           printf '%s\n' "$CI_AGE_IDENTITY" > "$KEY"
           mkdir -p "$RUNNER_TEMP/secure-ci"
-          age -d -i "$KEY" -o "$TAR" ci/ci/sealed/secure-ci-scripts.tar.age
-          tar -xzf "$TAR" -C "$RUNNER_TEMP/secure-ci"
-          test -x "$RUNNER_TEMP/secure-ci/scripts/check-version.sh"
-          echo 'Encrypted CI implementation unlocked.'
+          age -d -i "$KEY" -o "$TMP" ci/ci/sealed/secure-ci-scripts.tar.age > "$RUNNER_TEMP/simple-private-logs/ci-unseal.log" 2>&1 || { echo 'sealed CI could not be unlocked'; exit 1; }
+          tar -xzf "$TMP" -C "$RUNNER_TEMP/secure-ci" > "$RUNNER_TEMP/simple-private-logs/ci-extract.log" 2>&1 || { echo 'sealed CI could not be extracted'; exit 1; }
+          test -x "$RUNNER_TEMP/secure-ci/scripts/checkout-source.sh"
 
-      - name: Create read-only GitHub App token for private source and submodules
+      - name: Install GameCI CLI (no private source loaded yet)
+        uses: game-ci/cli@a9d35fd6cfae06bc130dcd49a48ccb8509197e38
+        with:
+          version: v0.1.48
+
+      - name: Generate read-only source token
         id: source-token
         uses: actions/create-github-app-token@v3
         with:
@@ -69,81 +82,73 @@ jobs:
           owner: ${{ github.repository_owner }}
           permission-contents: read
 
-      - name: Checkout private Unity project and recursive private submodules
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ vars.SOURCE_REPOSITORY }}
-          ref: ${{ inputs.source_ref }}
-          token: ${{ steps.source-token.outputs.token }}
-          path: project
-          submodules: recursive
-          lfs: true
-          persist-credentials: false
-          fetch-depth: 1
-
-      - name: Complete nested Git LFS downloads
+      - name: Checkout private Unity source silently
         shell: bash
         env:
           SOURCE_READ_TOKEN: ${{ steps.source-token.outputs.token }}
-        run: bash "$RUNNER_TEMP/secure-ci/scripts/finalize-checkout.sh" project
+          SOURCE_REPOSITORY: ${{ vars.SOURCE_REPOSITORY }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          umask 077
+          bash "$RUNNER_TEMP/secure-ci/scripts/checkout-source.sh" > "$RUNNER_TEMP/simple-private-logs/source-checkout.log" 2>&1 || { echo 'private checkout failed; encrypted diagnostics will be provided'; exit 1; }
 
-      - name: Validate Simple source, scenes and submodules
+      - name: Validate project without public source details
         shell: bash
-        run: bash "$RUNNER_TEMP/secure-ci/scripts/validate-simple.sh" project
+        run: |
+          set -euo pipefail
+          bash "$RUNNER_TEMP/secure-ci/scripts/validate-simple.sh" project > "$RUNNER_TEMP/simple-private-logs/source-validation.log" 2>&1
+          bash "$RUNNER_TEMP/secure-ci/scripts/check-version.sh" project 2022.3.62f3 >> "$RUNNER_TEMP/simple-private-logs/source-validation.log" 2>&1
 
-      - name: Enforce Unity version 2022.3.62f3
+      - name: Build privately and retain diagnostics
         shell: bash
-        run: bash "$RUNNER_TEMP/secure-ci/scripts/check-version.sh" project 2022.3.62f3
-
-      - name: Build release APK
-        uses: game-ci/unity-builder@v4
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
           UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
           UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
-        with:
-          projectPath: project
-          unityVersion: 2022.3.62f3
-          targetPlatform: Android
-          buildsPath: build-apk
-          versioning: None
-          androidExportType: androidPackage
-          androidKeystoreName: release.keystore
-          androidKeystoreBase64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          androidKeystorePass: ${{ secrets.ANDROID_KEYSTORE_PASS }}
-          androidKeyaliasName: ${{ secrets.ANDROID_KEYALIAS_NAME }}
-          androidKeyaliasPass: ${{ secrets.ANDROID_KEYALIAS_PASS }}
+          SIMPLE_CI_LOG_DIR: ${{ runner.temp }}/simple-private-logs
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+          ANDROID_KEYALIAS_NAME: ${{ secrets.ANDROID_KEYALIAS_NAME }}
+          ANDROID_KEYALIAS_PASS: ${{ secrets.ANDROID_KEYALIAS_PASS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          bash "$RUNNER_TEMP/secure-ci/scripts/cli-build-android.sh" > "$RUNNER_TEMP/simple-private-logs/unity-build.log" 2>&1 || { echo 'build failed; download encrypted diagnostics'; exit 1; }
 
-      - name: Build release AAB
-        uses: game-ci/unity-builder@v4
-        env:
-          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
-          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
-          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
-          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
-        with:
-          projectPath: project
-          unityVersion: 2022.3.62f3
-          targetPlatform: Android
-          buildsPath: build-aab
-          versioning: None
-          androidExportType: androidAppBundle
-          androidKeystoreName: release.keystore
-          androidKeystoreBase64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          androidKeystorePass: ${{ secrets.ANDROID_KEYSTORE_PASS }}
-          androidKeyaliasName: ${{ secrets.ANDROID_KEYALIAS_NAME }}
-          androidKeyaliasPass: ${{ secrets.ANDROID_KEYALIAS_PASS }}
-
-      - name: Stage APK and AAB locally
+      # Always upload an encrypted bundle, even if source checkout or Unity fails.
+      # A hard runner shutdown, cancellation, or inability to install age is not recoverable.
+      - name: Encrypt outputs and private logs (success or failure)
+        if: always()
+        id: seal
         shell: bash
-        run: bash "$RUNNER_TEMP/secure-ci/scripts/stage-android.sh"
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/simple-private-logs" encrypted
+          printf 'Finalizer started; job status: %s\n' "${{ job.status }}" >> "$RUNNER_TEMP/simple-private-logs/build-status.txt"
+          test -x "$(command -v age)" || { echo 'artifact encryption tool unavailable'; exit 1; }
+          # Capture Unity's persistent Editor.log, if it exists, inside the encrypted bundle.
+          for f in "$HOME/Library/Logs/Unity/Editor.log" "$HOME/.config/unity3d/Editor.log"; do
+            if [ -f "$f" ]; then cp "$f" "$RUNNER_TEMP/simple-private-logs/editor.log"; fi
+          done
+          python3 - <<'PY_TAR' | age -r "$(cat ci/ci/artifact-recipient.txt)" -o "encrypted/android-${{ github.run_id }}.tar.age"
+          import os, sys, tarfile
+          home = os.environ['RUNNER_TEMP']
+          workspace = os.environ['GITHUB_WORKSPACE']
+          logs = os.path.join(home, 'simple-private-logs')
+          artifacts = os.path.join(workspace, 'dist')
+          with tarfile.open(fileobj=sys.stdout.buffer, mode='w|') as tf:
+              tf.add(logs, arcname='private-logs')
+              if os.path.isdir(artifacts):
+                  tf.add(artifacts, arcname='build-outputs')
+          PY_TAR
+          test -s "encrypted/android-${{ github.run_id }}.tar.age" || exit 1
+          echo 'Encrypted diagnostics and available outputs sealed.'
 
-      - name: Encrypt build outputs using public age recipient
-        shell: bash
-        run: bash "$RUNNER_TEMP/secure-ci/scripts/pack.sh" dist "encrypted/android-${{ github.run_id }}.tar.age" ci/ci/artifact-recipient.txt
-
-      - name: Upload encrypted artifact only
+      - name: Upload encrypted package only
+        if: always() && steps.seal.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: android-sealed-${{ github.run_id }}
