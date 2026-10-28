@@ -151,7 +151,21 @@ jobs:
             export UNITY_LICENSE
           fi
           unset UNITY_LICENSE_BASE64
-          bash "$RUNNER_TEMP/secure-ci/scripts/cli-build-android.sh" > "$RUNNER_TEMP/simple-private-logs/unity-build.log" 2>&1 || { echo 'build failed; download encrypted diagnostics'; exit 1; }
+          if ! bash "$RUNNER_TEMP/secure-ci/scripts/cli-build-android.sh" > "$RUNNER_TEMP/simple-private-logs/unity-build.log" 2>&1; then
+            if grep -q 'Requesting activation (personal license)' "$RUNNER_TEMP/simple-private-logs/unity-build.log"; then
+              # The GameCI activation script captures Unity's detailed stdout internally.
+              # Reproduce license import once without private source, keeping all output encrypted.
+              echo 'Unity Personal activation failed; collecting private diagnostics.'
+              timeout 120s docker run --rm \
+                --env UNITY_LICENSE \
+                --entrypoint /bin/bash \
+                unityci/editor:ubuntu-2022.3.62f3-android-3 \
+                -c 'umask 077; printf "%s\n" "$UNITY_LICENSE" >/tmp/UnityLicenseFile.ulf; unity-editor -batchmode -nographics -logFile /dev/stdout -quit -manualLicenseFile /tmp/UnityLicenseFile.ulf; result=$?; rm -f /tmp/UnityLicenseFile.ulf; exit "$result"' \
+                > "$RUNNER_TEMP/simple-private-logs/unity-license-debug.log" 2>&1 || true
+            fi
+            echo 'build failed; download encrypted diagnostics'
+            exit 1
+          fi
 
       # Always upload an encrypted bundle, even if source checkout or Unity fails.
       # A hard runner shutdown, cancellation, or inability to install age is not recoverable.
