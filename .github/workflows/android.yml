@@ -156,12 +156,30 @@ jobs:
               # The GameCI activation script captures Unity's detailed stdout internally.
               # Reproduce license import once without private source, keeping all output encrypted.
               echo 'Unity Personal activation failed; collecting private diagnostics.'
+              mkdir -p "$RUNNER_TEMP/simple-private-logs/licensing-client"
               timeout 120s docker run --rm \
                 --env UNITY_LICENSE \
+                --volume "$RUNNER_TEMP/simple-private-logs/licensing-client:/ci-licensing-logs" \
                 --entrypoint /bin/bash \
                 unityci/editor:ubuntu-2022.3.62f3-android-3 \
-                -c 'umask 077; printf "%s\n" "$UNITY_LICENSE" >/tmp/UnityLicenseFile.ulf; unity-editor -batchmode -nographics -logFile /dev/stdout -quit -manualLicenseFile /tmp/UnityLicenseFile.ulf; result=$?; rm -f /tmp/UnityLicenseFile.ulf; exit "$result"' \
-                > "$RUNNER_TEMP/simple-private-logs/unity-license-debug.log" 2>&1 || true
+                -c '
+                  umask 077
+                  save_licensing_logs() {
+                    for item in \
+                      "$HOME/.config/unity3d/Unity/Unity.Licensing.Client.log" \
+                      "$HOME/.config/unity3d/Unity/Unity.Entitlements.Audit.log" \
+                      "$HOME/.config/unity3d/Editor.log"; do
+                      if [ -f "$item" ]; then
+                        cp "$item" "/ci-licensing-logs/$(basename "$item")" || true
+                      fi
+                    done
+                    rm -f /tmp/UnityLicenseFile.ulf
+                  }
+                  trap save_licensing_logs EXIT
+                  printf "%s\n" "$UNITY_LICENSE" > /tmp/UnityLicenseFile.ulf
+                  unity-editor -batchmode -nographics -logFile /dev/stdout -quit \
+                    -manualLicenseFile /tmp/UnityLicenseFile.ulf
+                ' > "$RUNNER_TEMP/simple-private-logs/unity-license-debug.log" 2>&1 || true
             fi
             echo 'build failed; download encrypted diagnostics'
             exit 1
