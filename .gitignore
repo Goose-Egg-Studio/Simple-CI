@@ -1,0 +1,24 @@
+# Private signing / licensing materials
+*.ulf
+*.p12
+*.p8
+*.jks
+*.keystore
+*.mobileprovision
+*.pem
+*.base64
+*.key
+*.env
+.env*
+# Never commit identities or decrypted scripts
+AGE-SECRET-KEY*
+*identity*
+*age-key*
+ci-unsealed/
+private-scripts/
+secure-ci-scripts.tar
+secure-ci-scripts.tar.gz
+new-secure-ci-scripts.tar
+*.tar
+*.tar.age.tmp
+# Workflows, .age ciphertext and public age1 recipients are intentionally tracked.

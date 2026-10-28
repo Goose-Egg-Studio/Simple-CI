@@ -1,0 +1,8 @@
+# Example only. This file is NOT used by CI.
+# In the private project repository, track submodules with git submodule add.
+[submodule "Assets/GameData/Audio"]
+    path = Assets/GameData/Audio
+    url = https://github.com/YourOrg/Game-Audio.git
+[submodule "Assets/GameData/Charts"]
+    path = Assets/GameData/Charts
+    url = https://github.com/YourOrg/Game-Charts.git
