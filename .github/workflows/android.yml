@@ -27,7 +27,7 @@ jobs:
         contains(fromJSON(vars.ALLOWED_BUILD_ACTORS || '[]'), github.actor) &&
         contains(fromJSON(vars.ALLOWED_BUILD_ACTORS || '[]'), github.triggering_actor)
       }}
-    runs-on: ubuntu-24.04
+    runs-on: macos-26-intel
     timeout-minutes: 180
     environment: android-build
     steps:
@@ -49,7 +49,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update -qq >/dev/null 2>&1 && sudo apt-get install -y -qq age >/dev/null 2>&1 || { echo 'crypto tool installation failed'; exit 1; }
+          mkdir -p "$RUNNER_TEMP/simple-private-logs"
+          (brew list --versions age >/dev/null 2>&1 || brew install age) > "$RUNNER_TEMP/simple-private-logs/crypto-install.log" 2>&1 || { echo 'age crypto installation failed; see encrypted diagnostics'; exit 1; }
+          command -v age >/dev/null || { echo 'age binary missing'; exit 1; }
+          echo 'Encryption tool ready.'
 
       - name: Unseal CI implementation
         shell: bash
@@ -67,6 +70,14 @@ jobs:
           age -d -i "$KEY" -o "$TMP" ci/ci/sealed/secure-ci-scripts.tar.age > "$RUNNER_TEMP/simple-private-logs/ci-unseal.log" 2>&1 || { echo 'sealed CI could not be unlocked'; exit 1; }
           tar -xzf "$TMP" -C "$RUNNER_TEMP/secure-ci" > "$RUNNER_TEMP/simple-private-logs/ci-extract.log" 2>&1 || { echo 'sealed CI could not be extracted'; exit 1; }
           test -x "$RUNNER_TEMP/secure-ci/scripts/checkout-source.sh"
+          # Native macOS implementation is separately age-sealed to preserve
+          # the known-good Linux implementation for a quick rollback.
+          MAC_TMP="$RUNNER_TEMP/simple-ci-macos-build.tar.gz"
+          trap 'rm -f "$KEY" "$TMP" "$MAC_TMP"' EXIT
+          age -d -i "$KEY" -o "$MAC_TMP" ci/ci/sealed/macos-android-extra.age > "$RUNNER_TEMP/simple-private-logs/macos-unseal.log" 2>&1 || { echo 'macOS build implementation could not be unlocked'; exit 1; }
+          tar -xzf "$MAC_TMP" -C "$RUNNER_TEMP/secure-ci" > "$RUNNER_TEMP/simple-private-logs/macos-extract.log" 2>&1 || { echo 'macOS build implementation could not be extracted'; exit 1; }
+          test -x "$RUNNER_TEMP/secure-ci/scripts/mac-build-android.sh"
+          test -s "$RUNNER_TEMP/secure-ci/scripts/SimpleCISealedMacAndroid.cs"
 
       - name: Install GameCI CLI privately (pinned installer)
         shell: bash
@@ -174,64 +185,16 @@ jobs:
           done
           echo 'CI preflight passed: license and Android signing credentials configured.'
 
-          # The monitor writes the entire Unity stdout/stderr to a PRIVATE file,
-          # and emits only allow-listed phase names and known error categories
-          # to the public GitHub Actions console. Never tail or grep raw lines
-          # into public stdout, even during failure.
-          echo 'Starting sealed Unity build with safe live progress reporting.'
+          # macOS Intel: native Unity Hub/Editor via GameCI, not Linux Docker.
+          # The decrypted editor script explicitly builds Addressables,
+          # validates its encrypted bundle manifest, and signs APK/AAB.
+          # All Unity/Hub output stays private; public logs show safe markers.
+          echo 'Starting sealed macOS Unity build with safe live progress reporting.'
           if ! python3 -u ci/ci/safe-progress.py \
               --log "$RUNNER_TEMP/simple-private-logs/unity-build.log" \
               --heartbeat 60 -- \
-              bash "$RUNNER_TEMP/secure-ci/scripts/cli-build-android.sh"; then
-            if grep -Fq 'Failed to build Addressables content' "$RUNNER_TEMP/simple-private-logs/unity-build.log" ||
-               grep -Fq 'Addressable content build failure' "$RUNNER_TEMP/simple-private-logs/unity-build.log"; then
-              echo 'Addressables content build failed; player outputs are incomplete. See age-encrypted diagnostics.'
-            elif grep -Fq 'Requesting activation (professional license)' "$RUNNER_TEMP/simple-private-logs/unity-build.log"; then
-              printf 'gameci-activation-branch=online-serial\n' >> "$RUNNER_TEMP/simple-private-logs/licensing-input-check.txt"
-              echo 'Unity online serial activation was attempted; see encrypted diagnostics for the result.'
-            elif grep -Fq 'Requesting activation (personal license)' "$RUNNER_TEMP/simple-private-logs/unity-build.log"; then
-              printf 'gameci-activation-branch=ulf-import\n' >> "$RUNNER_TEMP/simple-private-logs/licensing-input-check.txt"
-              if [[ -n "${UNITY_SERIAL-}" && -n "${UNITY_EMAIL-}" && -n "${UNITY_PASSWORD-}" ]]; then
-                echo 'GameCI did not select online activation despite credentials reaching the workflow step; check encrypted diagnostics for forwarding.'
-              else
-                echo 'GameCI selected Personal ULF import; check which credential is missing in the encrypted diagnostics.'
-              fi
-              # The GameCI activation script captures Unity's detailed stdout internally.
-              # Reproduce license import once without private source, keeping all output encrypted.
-              echo 'Unity Personal activation failed; collecting private diagnostics.'
-              mkdir -p "$RUNNER_TEMP/simple-private-logs/licensing-client"
-              timeout 120s docker run --rm \
-                --env UNITY_LICENSE \
-                --env "CI_LOG_OWNER_UID=$(id -u)" \
-                --env "CI_LOG_OWNER_GID=$(id -g)" \
-                --volume "$RUNNER_TEMP/simple-private-logs/licensing-client:/ci-licensing-logs" \
-                --entrypoint /bin/bash \
-                unityci/editor:ubuntu-2022.3.62f3-android-3 \
-                -c '
-                  umask 077
-                  save_licensing_logs() {
-                    for item in \
-                      "$HOME/.config/unity3d/Unity/Unity.Licensing.Client.log" \
-                      "$HOME/.config/unity3d/Unity/Unity.Entitlements.Audit.log" \
-                      "$HOME/.config/unity3d/Editor.log"; do
-                      if [ -f "$item" ]; then
-                        cp "$item" "/ci-licensing-logs/$(basename "$item")" || true
-                      fi
-                    done
-                    rm -f /tmp/UnityLicenseFile.ulf
-                    # Container runs as root; return private log ownership to the host runner.
-                    chown -R "$CI_LOG_OWNER_UID:$CI_LOG_OWNER_GID" /ci-licensing-logs || true
-                  }
-                  trap save_licensing_logs EXIT
-                  printf "%s\n" "$UNITY_LICENSE" > /tmp/UnityLicenseFile.ulf
-                  unity-editor -batchmode -nographics -logFile /dev/stdout -quit \
-                    -manualLicenseFile /tmp/UnityLicenseFile.ulf
-                ' > "$RUNNER_TEMP/simple-private-logs/unity-license-debug.log" 2>&1 || true
-            else
-              printf 'gameci-activation-branch=unknown\n' >> "$RUNNER_TEMP/simple-private-logs/licensing-input-check.txt"
-              echo 'Unity build failed before a recognizable activation branch or during compilation; see encrypted diagnostics.'
-            fi
-            echo 'build failed; download encrypted diagnostics'
+              bash "$RUNNER_TEMP/secure-ci/scripts/mac-build-android.sh"; then
+            echo 'macOS Unity build failed; see age-encrypted diagnostics.'
             exit 1
           fi
           # Independent fail-closed gate, even if a monitor or future GameCI
@@ -254,7 +217,7 @@ jobs:
           umask 077
           mkdir -p "$RUNNER_TEMP/simple-private-logs" encrypted
           printf 'Finalizer started; job status: %s\n' "${{ job.status }}" >> "$RUNNER_TEMP/simple-private-logs/build-status.txt"
-          # Also repair files if Docker timed out or its EXIT trap did not complete.
+          # Repair any private licensing-client files before packaging, if present.
           if [ -d "$RUNNER_TEMP/simple-private-logs/licensing-client" ]; then
             sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/simple-private-logs/licensing-client"
             chmod -R go-rwx "$RUNNER_TEMP/simple-private-logs/licensing-client"
