@@ -64,7 +64,7 @@ Windows PowerShell 文件 Base64 示例：
 
 `ci/artifact-recipient.txt` 是**构建产物加密公钥**，Runner 只有公钥，没有产物解密权限。产物解密私钥必须留在授权维护者本机，不应放入任何 GitHub Secret。
 
-下载 `android-*.tar.age` 或 `ios-*.tar.age` 后，在本地执行：
+下载 `ios-*.tar.age` 后，在本地执行（Android 现在使用独立的 `.tar.gz.age` 包，见下文）：
 
 ```bash
 age -d -i artifact-age-key.txt -o output.tar android-12345.tar.age
@@ -82,13 +82,41 @@ tar -xf output.tar
 - 固定和定期审核第三方 Actions；确保能修改默认分支和工作流的人员可信。
 - 不要把 `Library/`、明文构建产物、调试日志或本地密钥加入公开 Git 历史；`.gitignore` 不能代替人工审计。
 
-## Android CI 构建环境（2026-10-29 更新）
+## Android CI 构建环境与诊断（2026-10-29）
 
-Android 工作流 `.github/workflows/android.yml` 使用 **`macos-26-intel`**（macOS 26 / Intel x64，标准 GitHub-hosted runner）。原因是 Unity 2022.3 的 Linux Editor 无法导入项目中的 MP4 视频，导致 Addressables 打包失败，但原生 Player Build 仍可能报告成功。
+Android 工作流 `.github/workflows/android.yml` 采用 **`macos-26-intel`** 和 GameCI CLI v0.1.48 的原生 Unity Editor。旧 Linux Editor 无法正常导入工程中的 MP4，造成 Addressables 内容缺失，但 Player 可能仍返回成功。Android 保留原有 age 加密脚本以及额外的 `ci/sealed/macos-android-extra.age`，无需更换解密密钥。
 
-- 使用 **GameCI CLI v0.1.48 的 macOS 原生 Unity Editor/Hub 构建**，不使用 Linux Docker 镜像。
-- 原有 `ci/sealed/secure-ci-scripts.tar.age` 保留不变；另附同一公开接收方密钥加密的 `ci/sealed/macos-android-extra.age`，包含 macOS 构建入口和 Unity Editor CI 构建方法。无需配置新的 Secret。
-- Unity 构建前显式执行 Addressables 内容构建，并校验自定义加密 bundle 清单；APK/AAB 上传前还会检查包内的本地 bundle 与 manifest。失败只上传 age 加密诊断，不把完整 Unity 日志或未加密安装包公开。
-- macOS 标准 Runner 的磁盘和内存可能不足以同时安装 Unity、Android 模块、导入全部素材；因此第一次迁移仍需通过实际运行验证，不能仅凭 YAML 静态校验断言成功。
-- Android 构建结果仍是一个 `android-sealed-<run_id>` Artifact；解密后的 `private-logs/` 为诊断，`build-outputs/` 为 APK/AAB。
+**每次 Android 构建最多上传三个独立的 GitHub Actions Artifacts：**
+
+| Artifact 名称 | 唯一的内部文件 | 解密后内容 |
+| --- | --- | --- |
+| `android-private-logs-<run_id>` | `android-<run_id>-logs.tar.gz.age` | `private-logs/`（Unity/Hub 原始日志、监测状态、封装状态） |
+| `android-sealed-apk-<run_id>` | `android-<run_id>-apk.tar.gz.age` | `build-outputs/*.apk` |
+| `android-sealed-aab-<run_id>` | `android-<run_id>-aab.tar.gz.age` | `build-outputs/*.aab` |
+
+三个压缩包**分别**使用 `ci/artifact-recipient.txt` 指定的 age 公钥加密；公开 Actions、Artifacts 以及缓存中不会存放明文 APK、AAB、Unity 源文件或原始诊断内容。压缩包解密私钥仍只留在维护者本地。
+
+本地解密示例（把 RUN_ID 换成实际值）：
+
+```bash
+age -d -i artifact-age-key.txt -o apk.tar.gz android-RUN_ID-apk.tar.gz.age
+tar -xzf apk.tar.gz
+age -d -i artifact-age-key.txt -o aab.tar.gz android-RUN_ID-aab.tar.gz.age
+tar -xzf aab.tar.gz
+age -d -i artifact-age-key.txt -o logs.tar.gz android-RUN_ID-logs.tar.gz.age
+tar -xzf logs.tar.gz
+```
+
+如果构建失败或仅产出一种 Android 格式，会尽可能上传**独立加密诊断包**及已有的 APK/AAB；但只有完整的 APK、AAB 和诊断包均已成功上传，成功构建才算通过最终验收。
+
+### 构建长时间无进展时
+
+`ci/safe-progress.py` 使用独立的心跳 / watchdog 线程，不再受 Unity 原始日志持续刷屏的影响。公开 Actions 每分钟只输出固定安全状态（是否观察到 Unity/Hub、日志是否增长、磁盘是否偏低），不会打印路径、素材名、堆栈或 Unity 原始输出。详细采样数据只写入加密日志包中的 `private-logs/unity-watchdog.log`。
+
+- **35 分钟完全没有原始日志增长**：结束构建并尝试加密诊断。
+- **总构建时间超过 115 分钟**：结束构建并尝试加密诊断。
+- **剩余磁盘低于 1 GiB，连续三次检查**：结束构建并尝试加密诊断。
+- 诊断包会尽可能包含 Unity Hub、Unity Editor 最近的日志片段和磁盘快照，防止再出现只有心跳、无从定位的情况。
+
+**重要：** GitHub 取消运行或 Runner 被强制回收时，`if: always()` 无法保证后续加密/上传步骤一定执行。为了获取诊断，遇到长时间卡顿应优先让 watchdog 主动超时，而不是手动点击 Cancel workflow。此监控不能证明 Unity 一定卡在安装阶段，需结合下一次的加密日志判断。
 
