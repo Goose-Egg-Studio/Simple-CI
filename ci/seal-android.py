@@ -6,6 +6,7 @@ console. Each artifact is encrypted before upload. A failed/missing APK or AAB
 does not prevent upload of the encrypted diagnostics archive.
 """
 import argparse
+import gzip
 import os
 import shutil
 import subprocess
@@ -82,8 +83,11 @@ def seal(source, arcname, destination, recipient, compression=1):
                 stderr=sys.stderr
             )
             try:
-                with tarfile.open(fileobj=proc.stdin, mode="w|gz", compresslevel=compression) as tar:
-                    tar.add(str(source), arcname=arcname, recursive=True)
+                # Explicit gzip wrapper supports Python 3.11's streaming
+                # tarfile API (which lacks a compresslevel parameter).
+                with gzip.GzipFile(fileobj=proc.stdin, mode="wb", compresslevel=compression) as gz:
+                    with tarfile.open(fileobj=gz, mode="w|") as tar:
+                        tar.add(str(source), arcname=arcname, recursive=True)
                 proc.stdin.close()
                 rc = proc.wait(timeout=60)
                 if rc:
