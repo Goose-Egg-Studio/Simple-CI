@@ -56,9 +56,14 @@ printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_editor_start'
 # tee is safe here: safe-progress captures *all* stdout privately.
 CLI="$(command -v unity)"
 DETAIL="$SIMPLE_CI_LOG_DIR/unity-cli-install-detail.log"
+# Use the smallest documented unattended install invocation.  The CLI
+# is already running without a TTY, so the optional global
+# --non-interactive/--format flags are not needed here; beta variants can
+# reject unexpected combinations as INVALID_COMMAND_ARGS.
+# -m android --cm is the documented Android + SDK/NDK/OpenJDK path.
 INSTALL_ARGS=(install "$VERSION" --changeset "$CHANGESET"
   --module android --child-modules --architecture x86_64
-  --non-interactive --yes --accept-eula --format ndjson)
+  --yes --accept-eula)
 
 set +e
 "$CLI" "${INSTALL_ARGS[@]}" 2>&1 | tee "$DETAIL"
