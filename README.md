@@ -118,31 +118,20 @@ Android 工作流 `.github/workflows/android.yml` 使用 **`macos-26-intel`**（
 
 这是 **watchdog 误杀风险的修复，不是 Unity Hub 下载问题本身已解决的证明**。建议下一次观察 Hub 自身下载进度、实际安装完成标记；若仍无法安装，再考虑改用 Unity 官方独立 CLI 或预安装 Editor + Android 模块。不要因为超出 25 分钟没有普通日志就手动取消构建。
 
-## Android 安装链路切换：独立 Unity CLI（试验性）
+## Android 安装链路切换：新版独立 Unity CLI + 用户可写目录（2026-10-29）
 
-此前 macOS Runner 上的 GameCI v0.1.48 调用 Unity Hub 3.21.0 的 `--headless install --childModules`，多次停在 Unity Editor 及 Android SDK/NDK 下载阶段。新流程不再依赖此安装器完成 Editor 的下载：
+**最新确认的根因（Run 40905778356）：** 解密日志 `private-logs/unity-cli-editor-detail.log` 明确显示 `Access to the path '/Applications/Unity/Hub/Editor' is denied.`。在此之前，旧 CLI 的 `install-path --set` 曾输出 `This directory does not exist.`，但没有成功设置编辑器目录。受保护的系统路径写权限导致 Editor 安装立即失败，这一次没有进入下载阶段，也与 Unity 项目、Addressables 无关。
 
-1. 从 Homebrew 官方 `unity-cli` cask 安装 **Unity 独立 CLI**（`brew install --cask unity-cli`），无需在安装阶段调用 Unity Hub。
-2. 用 Unity CLI 安装 **Unity 2022.3.62f3 / changeset 96770f904ca7 / x86_64**，同时指定 `android` 及其子模块（SDK、NDK、OpenJDK）：`unity install 2022.3.62f3 --changeset 96770f904ca7 --module android --child-modules --architecture x86_64`。
-3. 安装后严格检查 `/Applications/Unity/Hub/Editor/2022.3.62f3/Unity.app/Contents/MacOS/Unity`、`PlaybackEngines/AndroidPlayer`、`SDK/`、`NDK/` 和 `OpenJDK/`；任何缺失均直接判失败，不进入构建。
-4. 然后才调用原有 age 解封的 GameCI 构建脚本，继续构建 Addressables、签名 APK/AAB；后者仍可能为兼容性初始化 Unity Hub，但理论上应复用现有 Editor，**不再通过 Hub 下载 Editor**。
+同时，诊断确认此前 Homebrew cask 提供的是 **Unity CLI 1.0.0-beta.6**；Unity 于 2026-10-21 发布了 beta.14，其间对安装路径、模块安装、无交互提权等进行了修复。为避免旧 cask 的版本滞后：
 
-独立安装的 stdout/stderr 仍全部由 `ci/safe-progress.py` 写入私有 `unity-cli-install.log`，安装健康数据写入 `health-install.jsonl`；公开 Actions 只显示固定阶段与健康标记。两份文件均进入既有的 **单独 age 加密诊断 Artifact**，APK、AAB、日志继续分别加密上传。
+1. 使用 **Unity 官方 HTTPS 安装脚本** `https://unity.com/install.sh` 和 `UNITY_CLI_CHANNEL=beta` 安装 CLI，独立保存到 `$RUNNER_TEMP/simple-unity-cli/bin/unity`。不再使用 Homebrew 的旧 beta.6。运行时记录版本，对早于 beta.14 的 1.0.0 Beta 版本拒绝继续。
+2. 创建用户拥有、权限为 `0700` 的 `$RUNNER_TEMP/simple-unity-editors`，将 CLI 的 `install-path` 配置为该目录，并在继续前读回验证。**不**对 `/Applications` 执行 `chmod 777` 或广泛 `chown -R`。
+3. GameCI v0.1.48 在 macOS 上固定检查 `/Applications/Unity/Hub/Editor/<version>/Unity.app`。因此仅在标准路径为空时，以 `sudo -n` 建立从 `/Applications/Unity/Hub/Editor` 到上述用户可写目录的**符号链接**；已有非空安装目录或未知符号链接时立即失败，不删除或覆盖已有安装。
+4. 使用独立 Unity CLI 分两段安装：先执行带固定 changeset 的 **Unity 2022.3.62f3 x86_64 Editor 本体安装**，再执行 `unity install-modules -e 2022.3.62f3 -m android --child-modules --accept-eula` 安装 Android Support、SDK、NDK、OpenJDK。
+5. 验证标准路径能够看到 Editor 二进制及全部 Android 模块后，才调用原有 age 解密的 GameCI 构建脚本。GameCI 可能仍会安装 Hub 应用以兼容其内部接口，但因 Editor 已存在，理论上不会再调用旧 Hub 安装器下载 Editor。
 
-**注意：**独立 Unity CLI 仍属实验性。新增路径尚未在真正的 GitHub macOS Runner 上验证；GameCI 是否认可独立 CLI 安装位置及完整子模块仍需一次实际构建确认。如果 Unity CLI 的安装路径设置选项不可用，脚本会检查默认位置并在位置不匹配时失败，不会悄悄退回 Hub 下载。
+**保密约束不变：** CLI 下载器、安装器的 stdout/stderr 只写入 `private-logs/unity-cli-install.log`，细分到 `unity-cli-editor-detail.log` 与 `unity-cli-modules-detail.log`。安装路径配置与安装器帮助同样只进入独立的 age 加密诊断 Artifact；公开 Actions 日志仅有白名单健康提示。APK、AAB、诊断日志继续是三份**独立 age 加密归档**。
 
-参考：Unity 官方 [2022.3.62f3 发布页](https://unity.com/releases/editor/whats-new/2022.3.62f3)、[Unity CLI 用法](https://docs.unity.com/en-us/unity-cli/use-unity-cli) 和 [CLI 命令参考](https://docs.unity.com/en-us/unity-cli/unity-cli-reference)。
+**注意：** 这是针对已经确认的目录权限错误及旧版 CLI 的修复，尚未在全新的 GitHub macOS Runner 上验证完整 Editor/Android 安装及 APK/AAB 构建。Unity CLI 仍处于实验性阶段；官方安装脚本取当前 beta 频道版本，其上游代码会随发布更新，需要按供应链策略审计。
 
-
-### Unity CLI 即时退出的针对性处理（2026-10-29）
-
-预安装阶段曾在输出 `unity_cli_editor_start` 后立即失败，表明错误在独立 CLI 的安装命令内部，而非 Unity Hub 长时间无响应。Unity CLI 安装器对非交互环境的提权会在下载前检测；如果出现 `ELEVATION_FAILED`、`ELEVATION_CANCELLED` 或明确的权限错误，CI 现在会尝试一次 `sudo -n -H` 非交互重试；不是权限问题时**不会**盲目重试或切回旧 Unity Hub。
-
-目前保留 Unity 2022.3.62f3、changeset `96770f904ca7` 和 Android 子模块参数，新增独立的私有安装命令日志 `unity-cli-install-detail.log`、运行时参数帮助 `unity-cli-install-help.txt`、可选的 `unity-cli-root-retry.log`，最终都由原有 age 加密诊断包保护。Actions 只发布固定的错误类别（参数、发行版、授权提权或其他）。**这些改动是针对诊断和提权失败场景的修复，尚未经过成功安装及完整构建验证。**
-
-
-### 修复：拆分 Unity Editor 与 Android 模块安装（2026-10-29）
-
-独立 Unity CLI 的一体化安装命令多次在 T+0m 返回 `INVALID_COMMAND_ARGS`，并不能从公开日志推断究竟是哪项参数有冲突。现在先执行带固定 changeset 的**Editor 本体安装**，验证标准路径中的 Unity 二进制，再单独执行 `unity install-modules --editor-version 2022.3.62f3 --module android --child-modules --accept-eula`。各阶段用固定白名单提示输出（`Standalone Unity Editor core install ...`、`Android SDK NDK OpenJDK module install ...`），原始日志分存 `unity-cli-editor-detail.log` 和 `unity-cli-modules-detail.log`，并由既有 age 诊断加密机制保护。
-
-**注意**：Unity CLI 具体的 `INVALID_COMMAND_ARGS` 原因仍需要私有安装日志才能最终确定；拆分命令使下一次失败可以定位到 Editor 或 Android 模块，并非宣称已经解决该错误。安装器输出会经过 safe-progress 的私有日志管道，以防长时间下载安装被看作没有日志活动。必须通过真实 macOS Runner 才能验证成功。
+参考：[Unity 官方 CLI 安装方式](https://docs.unity.com/en-us/unity-cli/use-unity-cli)、[官方 CLI 发行说明](https://docs.unity.com/en-us/unity-cli/release-notes)、[Unity CLI 命令参考](https://docs.unity.com/en-us/unity-cli/unity-cli-reference)。
