@@ -19,6 +19,12 @@ SAFE_SCRIPT_PHASES = {
     b"SIMPLE_CI_PHASE=unity_cli_path_start": "Unity CLI Editor path configuration started",
     b"SIMPLE_CI_PHASE=unity_cli_path_done": "Unity CLI Editor path configuration completed",
     b"SIMPLE_CI_PHASE=unity_cli_editor_start": "Standalone Editor and Android modules install started",
+    b"SIMPLE_CI_PHASE=unity_cli_elevation_retry": "Unity CLI requesting noninteractive administrator retry",
+    b"SIMPLE_CI_PHASE=unity_cli_elevation_unavailable": "Unity CLI administrator privileges unavailable",
+    b"SIMPLE_CI_PHASE=unity_cli_invalid_arguments": "Unity CLI command argument validation failed",
+    b"SIMPLE_CI_PHASE=unity_cli_release_unavailable": "Unity Editor release metadata unavailable",
+    b"SIMPLE_CI_PHASE=unity_cli_elevation_failure": "Unity CLI installation administrator authorization failed",
+    b"SIMPLE_CI_PHASE=unity_cli_install_failed": "Unity CLI installation exited unsuccessfully",
     b"SIMPLE_CI_PHASE=unity_cli_editor_done": "Standalone Editor and Android modules install completed",
     b"SIMPLE_CI_PHASE=unity_cli_validated": "Unity Editor and Android components verified",
     b"SIMPLE_CI_PHASE=android_apk_start": "APK build requested",
@@ -43,6 +49,7 @@ EDITOR_PHASES = (
     ("player_ok", "Unity Android player verified", (b"SIMPLE_CI_PLAYER_VERIFIED",)),
 )
 FAILURE_MARKERS = (
+    ("Unity CLI install", (b"SIMPLE_CI_PHASE=unity_cli_invalid_arguments", b"SIMPLE_CI_PHASE=unity_cli_release_unavailable", b"SIMPLE_CI_PHASE=unity_cli_elevation_failure", b"SIMPLE_CI_PHASE=unity_cli_install_failed", b"SIMPLE_CI_PHASE=unity_cli_elevation_unavailable")),
     ("License", (b"Unclassified error occured while trying to activate license", b"License activation has failed")),
     ("C# compiler", (b"error CS",)),
     ("Android signing", (b"Unable to sign the application; please provide passwords!", b"Can not sign the application")),
