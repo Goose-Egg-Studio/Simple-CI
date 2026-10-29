@@ -24,14 +24,16 @@ SAFE_SCRIPT_PHASES = {
 }
 
 EDITOR_PHASES = (
-    ("image", "Unity container preparation", (b"Pulling from unityci/editor", b"running docker process for linux")),
-    ("license", "Unity online license activation requested", (b"Requesting activation (professional license)",)),
+    ("image", "Unity runtime preparation", (b"Pulling from unityci/editor", b"running docker process for linux", b"installing Unity Editor", b"Installing Unity Editor")),
+    ("license", "Unity license activation requested", (b"Requesting activation (professional license)", b"Requesting activation (personal license)", b"Requesting activation\n")),
     ("license_ok", "Unity license activated successfully", (b"Activation complete.",)),
-    ("project", "Unity project build entered", (b"#    Building project",)),
+    ("project", "Unity project build entered", (b"#    Building project", b"#    Building project     #")),
     ("packages", "Unity packages resolved", (b"[Package Manager] Done resolving packages",)),
     ("assets", "Unity asset import started", (b"Application.AssetDatabase Initial Refresh Start",)),
     ("scripts", "Unity C# script compilation started", (b"[ScriptCompilation] Requested script compilation",)),
     ("buildplayer", "Unity BuildPlayer entered", (b"BuildPlayer: building player", b"BuildPlayerWindow.DefaultBuildMethods.BuildPlayer", b"Building Player",)),
+    ("addressables_ok", "Encrypted Addressables verified", (b"SIMPLE_CI_ADDRESSABLES_VERIFIED",)),
+    ("player_ok", "Unity Android player verified", (b"SIMPLE_CI_PLAYER_VERIFIED",)),
 )
 
 # Do not copy the matched line into stdout. Labels are fixed and independent
@@ -40,7 +42,7 @@ FAILURE_MARKERS = (
     ("License", (b"Unclassified error occured while trying to activate license", b"License activation has failed")),
     ("C# compiler", (b"error CS",)),
     ("Android signing", (b"Unable to sign the application; please provide passwords!", b"Can not sign the application")),
-    ("Addressables", (b"Addressable content build failure", b"Failed to build Addressables content")),
+    ("Addressables", (b"Addressable content build failure", b"Failed to build Addressables content", b"Addressables content build failed", b"Encrypted Addressables manifest is missing", b"Encrypted Addressables bundle missing", b"Local encrypted Addressables are absent")),
     ("Asset/video importer", (b"Asset import failed for using an unsupported file type",)),
     ("Unity crash", (b"Segmentation fault", b"Fatal error in GC", b"Caught fatal signal",)),
 )
