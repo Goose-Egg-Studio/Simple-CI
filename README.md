@@ -101,3 +101,11 @@ Android 工作流 `.github/workflows/android.yml` 使用 **`macos-26-intel`**（
 为了避免类似 Run 40823348411 出现长时间无阶段进展的情况，当前 Android 监控默认规则：连续 25 分钟无 Unity 原始日志增长、60 分钟没有识别到新的构建阶段，或磁盘剩余低于 1.5 GiB，都会主动中止该构建并尽力进入诊断加密上传。这些限制是排障保护阈值，并不表示 Unity 超过该时间一定死锁。识别器本身依赖固定关键词，部分合法 Unity 日志可能不会触发阶段变化。
 
 `if: always()` 只提供 **best-effort** 日志收集：手动取消、Runner 强制关闭、磁盘耗尽或 age 不可用时，GitHub 不保证诊断包成功上传。排查长时卡住时，建议让健康检查主动失败并走完收尾流程，而非直接取消 Run。每个加密包使用同一个公开 `ci/artifact-recipient.txt` 接收方；解密私钥依旧不应进入 GitHub。
+
+### Unity Hub 安装阶段排障（2026-10-29）
+
+在 Run `40839715030` 中，GameCI CLI v0.1.48 成功通过 Homebrew 安装 Unity Hub 3.21.0，但 Unity Hub 在无界面安装 2022.3.62f3 的 Android SDK/NDK 子模块时停止输出，直到诊断监控触发超时。没有证据表明 Unity Editor 已启动、项目被导入或 Addressables 已开始构建。磁盘剩余约 128 GiB，因此该次故障并非磁盘空间耗尽。
+
+为了诊断 Unity Hub 自身而不是只看 Editor.log，Android 诊断终结器现在把 `~/Library/Application Support/UnityHub/logs` 中最近最多 8 个普通文本/JSON 日志，每个末尾最多 4 MiB，复制到 **仅 age 加密上传** 的 `private-logs/unity-hub/`。同时生成 `private-logs/hub-install-state.json`，只记录 Editor 和 Android Build Support/SDK/NDK/OpenJDK 是否存在的布尔值。公开 Actions 心跳把 `editor=` 与 `hub=` 进程分别显示，以避免将 Unity Hub Helper 误判为 Editor 进程。Hub 日志可能包含敏感账号信息，仍须保护产物解密私钥，切勿直接公开解密后的日志。
+
+这只是可观测性修复，**尚未证明 Unity Hub 3.21.0 安装卡顿的具体原因**。下一轮应先分析加密的 Hub 日志，再决定是否升级 Hub、调整子模块安装方式或切换安装路径。
