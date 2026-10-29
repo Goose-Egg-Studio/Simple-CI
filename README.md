@@ -98,7 +98,7 @@ Android 工作流 `.github/workflows/android.yml` 使用 **`macos-26-intel`**（
 
 新版本的安全监控脚本独立于 Unity 原始日志读取循环，每 60 秒在公开 Actions 日志输出固定格式的心跳，并把详细指标写入**仅包含在加密诊断 Artifact 中**的 `private-logs/health.jsonl`。记录包括 Unity/GameCI 进程数量（仅按进程名统计，不采集命令行）、日志增长、磁盘剩余空间、最近识别的构建阶段及距离该阶段的耗时。不公开项目资源名、原始日志、命令行、工作目录或 Secret 值。
 
-为了避免类似 Run 40823348411 出现长时间无阶段进展的情况，当前 Android 监控默认规则：连续 25 分钟无 Unity 原始日志增长、60 分钟没有识别到新的构建阶段，或磁盘剩余低于 1.5 GiB，都会主动中止该构建并尽力进入诊断加密上传。这些限制是排障保护阈值，并不表示 Unity 超过该时间一定死锁。识别器本身依赖固定关键词，部分合法 Unity 日志可能不会触发阶段变化。
+为了避免类似 Run 40823348411 出现长时间无阶段进展的情况，当前 Android 监控默认规则：连续 45 分钟既没有 Unity 原始日志增长、也未观察到 Hub 临时下载文件增长或明显磁盘写入、120 分钟没有识别到新的构建阶段，或磁盘剩余低于 1.5 GiB，都会主动中止构建并尽力进入诊断加密上传。这些限制是排障保护阈值，并不表示 Unity 超过该时间一定死锁。识别器本身依赖固定关键词，部分合法 Unity 日志可能不会触发阶段变化。
 
 `if: always()` 只提供 **best-effort** 日志收集：手动取消、Runner 强制关闭、磁盘耗尽或 age 不可用时，GitHub 不保证诊断包成功上传。排查长时卡住时，建议让健康检查主动失败并走完收尾流程，而非直接取消 Run。每个加密包使用同一个公开 `ci/artifact-recipient.txt` 接收方；解密私钥依旧不应进入 GitHub。
 
@@ -109,3 +109,11 @@ Android 工作流 `.github/workflows/android.yml` 使用 **`macos-26-intel`**（
 为了诊断 Unity Hub 自身而不是只看 Editor.log，Android 诊断终结器现在把 `~/Library/Application Support/UnityHub/logs` 中最近最多 8 个普通文本/JSON 日志，每个末尾最多 4 MiB，复制到 **仅 age 加密上传** 的 `private-logs/unity-hub/`。同时生成 `private-logs/hub-install-state.json`，只记录 Editor 和 Android Build Support/SDK/NDK/OpenJDK 是否存在的布尔值。公开 Actions 心跳把 `editor=` 与 `hub=` 进程分别显示，以避免将 Unity Hub Helper 误判为 Editor 进程。Hub 日志可能包含敏感账号信息，仍须保护产物解密私钥，切勿直接公开解密后的日志。
 
 这只是可观测性修复，**尚未证明 Unity Hub 3.21.0 安装卡顿的具体原因**。下一轮应先分析加密的 Hub 日志，再决定是否升级 Hub、调整子模块安装方式或切换安装路径。
+
+### Hub 下载活动监测修正（Run 40845510393）
+
+最新加密日志明确显示 Unity Hub 3.21.0 已调用 2022.3.62f3 的下载管理器，下载源与磁盘验证均通过；Editor 的下载状态变为 `downloading`。其内部日志在启动下载后不再增长。健康记录表明 T+25m 到 T+26m 间可用磁盘突然减少约 0.82 GiB，**可能是下载仍在进行**（无法仅凭全盘变化证明归属于 Unity）。旧的 25 分钟标准输出超时可能在安装仍有活动时过早终止构建，不能把下载日志安静等同于真正死锁。
+
+新的独立监控还统计 macOS 临时目录中 `unityhub*` 下载目录的大小变化（仅记录字节数，不上传文件内容或路径），并将显著磁盘占用增长作为粗略活动提示。公开日志仅显示 `installer-io=active/quiet`。详细的 `hub_temp_bytes`、`hub_temp_growth_bytes`、`disk_drop_gib`、`last_observed_activity_seconds` 保存在 age 加密的 `health.jsonl`。这只能减少误报：如果 Hub 将文件写到其他位置或磁盘变化来自其他进程，仍然需要结合 Unity Hub 日志判断。
+
+这是 **watchdog 误杀风险的修复，不是 Unity Hub 下载问题本身已解决的证明**。建议下一次观察 Hub 自身下载进度、实际安装完成标记；若仍无法安装，再考虑改用 Unity 官方独立 CLI 或预安装 Editor + Android 模块。不要因为超出 25 分钟没有普通日志就手动取消构建。
