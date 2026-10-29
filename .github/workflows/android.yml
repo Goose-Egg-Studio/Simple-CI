@@ -151,8 +151,29 @@ jobs:
             export UNITY_LICENSE
           fi
           unset UNITY_LICENSE_BASE64
+          # Record only whether online-activation credentials reached this step.
+          # Never record values or hash/length information.
+          {
+            for name in UNITY_SERIAL UNITY_EMAIL UNITY_PASSWORD; do
+              if [[ -n "${!name-}" ]]; then
+                printf '%s=present\n' "$name"
+              else
+                printf '%s=missing\n' "$name"
+              fi
+            done
+          } > "$RUNNER_TEMP/simple-private-logs/licensing-input-check.txt"
+
           if ! bash "$RUNNER_TEMP/secure-ci/scripts/cli-build-android.sh" > "$RUNNER_TEMP/simple-private-logs/unity-build.log" 2>&1; then
-            if grep -q 'Requesting activation (personal license)' "$RUNNER_TEMP/simple-private-logs/unity-build.log"; then
+            if grep -Fq 'Requesting activation (professional license)' "$RUNNER_TEMP/simple-private-logs/unity-build.log"; then
+              printf 'gameci-activation-branch=online-serial\n' >> "$RUNNER_TEMP/simple-private-logs/licensing-input-check.txt"
+              echo 'Unity online serial activation was attempted; see encrypted diagnostics for the result.'
+            elif grep -Fq 'Requesting activation (personal license)' "$RUNNER_TEMP/simple-private-logs/unity-build.log"; then
+              printf 'gameci-activation-branch=ulf-import\n' >> "$RUNNER_TEMP/simple-private-logs/licensing-input-check.txt"
+              if [[ -n "${UNITY_SERIAL-}" && -n "${UNITY_EMAIL-}" && -n "${UNITY_PASSWORD-}" ]]; then
+                echo 'GameCI did not select online activation despite credentials reaching the workflow step; check encrypted diagnostics for forwarding.'
+              else
+                echo 'GameCI selected Personal ULF import; check which credential is missing in the encrypted diagnostics.'
+              fi
               # The GameCI activation script captures Unity's detailed stdout internally.
               # Reproduce license import once without private source, keeping all output encrypted.
               echo 'Unity Personal activation failed; collecting private diagnostics.'
@@ -184,6 +205,9 @@ jobs:
                   unity-editor -batchmode -nographics -logFile /dev/stdout -quit \
                     -manualLicenseFile /tmp/UnityLicenseFile.ulf
                 ' > "$RUNNER_TEMP/simple-private-logs/unity-license-debug.log" 2>&1 || true
+            else
+              printf 'gameci-activation-branch=unknown\n' >> "$RUNNER_TEMP/simple-private-logs/licensing-input-check.txt"
+              echo 'Unity build failed before a recognizable activation branch or during compilation; see encrypted diagnostics.'
             fi
             echo 'build failed; download encrypted diagnostics'
             exit 1
