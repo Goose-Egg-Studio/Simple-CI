@@ -80,7 +80,18 @@ def run():
             try:
                 os.killpg(proc.pid, signal.SIGTERM)
             except ProcessLookupError:
-                pass
+                return
+
+            # A hung Unity child may ignore SIGTERM; avoid losing diagnostics
+            # by waiting indefinitely in proc.wait() after the watchdog fires.
+            def force_kill():
+                time.sleep(12)
+                if proc.poll() is None:
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+            threading.Thread(target=force_kill, name="simple-force-kill", daemon=True).start()
 
     def mark_phase(label):
         state["phase"] = label
