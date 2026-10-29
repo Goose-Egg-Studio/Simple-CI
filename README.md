@@ -132,3 +132,10 @@ Android 工作流 `.github/workflows/android.yml` 使用 **`macos-26-intel`**（
 **注意：**独立 Unity CLI 仍属实验性。新增路径尚未在真正的 GitHub macOS Runner 上验证；GameCI 是否认可独立 CLI 安装位置及完整子模块仍需一次实际构建确认。如果 Unity CLI 的安装路径设置选项不可用，脚本会检查默认位置并在位置不匹配时失败，不会悄悄退回 Hub 下载。
 
 参考：Unity 官方 [2022.3.62f3 发布页](https://unity.com/releases/editor/whats-new/2022.3.62f3)、[Unity CLI 用法](https://docs.unity.com/en-us/unity-cli/use-unity-cli) 和 [CLI 命令参考](https://docs.unity.com/en-us/unity-cli/unity-cli-reference)。
+
+
+### Unity CLI 即时退出的针对性处理（2026-10-29）
+
+预安装阶段曾在输出 `unity_cli_editor_start` 后立即失败，表明错误在独立 CLI 的安装命令内部，而非 Unity Hub 长时间无响应。Unity CLI 安装器对非交互环境的提权会在下载前检测；如果出现 `ELEVATION_FAILED`、`ELEVATION_CANCELLED` 或明确的权限错误，CI 现在会尝试一次 `sudo -n -H` 非交互重试；不是权限问题时**不会**盲目重试或切回旧 Unity Hub。
+
+目前保留 Unity 2022.3.62f3、changeset `96770f904ca7` 和 Android 子模块参数，新增独立的私有安装命令日志 `unity-cli-install-detail.log`、运行时参数帮助 `unity-cli-install-help.txt`、可选的 `unity-cli-root-retry.log`，最终都由原有 age 加密诊断包保护。Actions 只发布固定的错误类别（参数、发行版、授权提权或其他）。**这些改动是针对诊断和提权失败场景的修复，尚未经过成功安装及完整构建验证。**
