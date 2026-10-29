@@ -42,15 +42,58 @@ else
 fi
 printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_path_done'
 
+# Snapshot the exact command flags supported by the installed beta.
+# Detailed help/diagnostics are private and are age-sealed by the finalizer.
+unity install --help > "$SIMPLE_CI_LOG_DIR/unity-cli-install-help.txt" 2>&1
 printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_editor_start'
-# Intentionally bypass Unity Hub --headless. Do not emit raw CLI output to
-# public Actions logs: safe-progress.py captures it to a private file.
-unity install "$VERSION" \
-  --changeset "$CHANGESET" \
-  --module android \
-  --child-modules \
-  --architecture x86_64 \
-  --non-interactive --yes --accept-eula
+
+# The install starts without Unity Hub --headless. Unity CLI >= beta.9
+# requests macOS administrator authorization *before* downloading; that
+# request may fail immediately when there is no interactive desktop.
+#
+# First try unprivileged; retry as root ONLY for known elevation/permission
+# failures. No retry for invalid options, missing releases or other errors.
+# tee is safe here: safe-progress captures *all* stdout privately.
+CLI="$(command -v unity)"
+DETAIL="$SIMPLE_CI_LOG_DIR/unity-cli-install-detail.log"
+INSTALL_ARGS=(install "$VERSION" --changeset "$CHANGESET"
+  --module android --child-modules --architecture x86_64
+  --non-interactive --yes --accept-eula --format ndjson)
+
+set +e
+"$CLI" "${INSTALL_ARGS[@]}" 2>&1 | tee "$DETAIL"
+install_code=${PIPESTATUS[0]}
+set -e
+
+if (( install_code != 0 )); then
+  if grep -Eiq 'ELEVATION_FAILED|ELEVATION_CANCELLED|permission denied|administrator permission|administrator privileges|authorization failed' "$DETAIL"; then
+    printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_elevation_retry'
+    # GitHub macOS hosted runners provide noninteractive sudo. Use the full
+    # executable path; don't source login profiles or copy project secrets.
+    if sudo -n true; then
+      set +e
+      sudo -n -H "$CLI" "${INSTALL_ARGS[@]}" 2>&1 | tee "$SIMPLE_CI_LOG_DIR/unity-cli-root-retry.log"
+      install_code=${PIPESTATUS[0]}
+      set -e
+    else
+      printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_elevation_unavailable'
+    fi
+  fi
+fi
+
+if (( install_code != 0 )); then
+  if grep -Eiq 'INVALID_COMMAND_ARGS|unknown option|unexpected argument|unrecognized option|unknown flag' "$DETAIL"; then
+    printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_invalid_arguments'
+  elif grep -Eiq 'RELEASE_NOT_FOUND|VERSION_NOT_FOUND|EDITOR_NOT_FOUND|NOT_FOUND|No matching editor|unable to resolve.*changeset' "$DETAIL"; then
+    printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_release_unavailable'
+  elif grep -Eiq 'ELEVATION_FAILED|ELEVATION_CANCELLED|permission denied|administrator permission|administrator privileges|authorization failed' "$DETAIL"; then
+    printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_elevation_failure'
+  else
+    printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_install_failed'
+  fi
+  printf 'Unity CLI install failed with exit status %d. Details remain in encrypted diagnostics.\n' "$install_code" >&2
+  exit "$install_code"
+fi
 printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_editor_done'
 
 # Fail closed: an incomplete install must never invoke the GameCI builder.
