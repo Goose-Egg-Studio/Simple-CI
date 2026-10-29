@@ -118,6 +118,22 @@ Android 工作流 `.github/workflows/android.yml` 使用 **`macos-26-intel`**（
 
 这是 **watchdog 误杀风险的修复，不是 Unity Hub 下载问题本身已解决的证明**。建议下一次观察 Hub 自身下载进度、实际安装完成标记；若仍无法安装，再考虑改用 Unity 官方独立 CLI 或预安装 Editor + Android 模块。不要因为超出 25 分钟没有普通日志就手动取消构建。
 
+## Android 最新安装路线：自包含 Editor（2026-10-30）
+
+在 2026-10-30 的一次新运行中，官方独立 Unity CLI 已完成 bootstrap，但此前使用 `unity install-path --set/--get` 的全局目录配置阶段立即失败，尚未进入 Editor 下载。**目前未拿到这次运行的解密日志，不能确认具体失败于哪个旧目录配置命令。**
+
+Unity CLI 1.0.0-beta.14 已增加 `unity install --download-directory <dir>` 与 `unity install-modules --download-directory <dir>`，可将 Editor 和模块完整安装到一个自包含目录，完全不修改全局 Hub 安装路径。CI 现在使用这条官方路径：
+
+1. 官方 Beta 安装器提供 Unity CLI，检查 CLI 是否支持 `--download-directory`，不支持则立即分类失败。
+2. 用 `unity install 2022.3.62f3 --changeset 96770f904ca7 --architecture x86_64 --download-directory "$RUNNER_TEMP/simple-unity-editors/2022.3.62f3" --yes --accept-eula` 安装 Editor。
+3. 用 `unity install-modules --download-directory "$RUNNER_TEMP/simple-unity-editors/2022.3.62f3" --module android --child-modules --accept-eula` 添加 Android SDK/NDK/OpenJDK；不再依赖 `-e`（Unity 1.0.0-beta.15 更改过其短选项含义）。
+4. **只有上述全部完成并通过本地完整性检查后**，才通过 `sudo -n` 创建 `/Applications/Unity/Hub/Editor/2022.3.62f3` 的**单个版本符号链接**，以便 GameCI v0.1.48 复用现有 Editor；不替换 Editor 根目录、不覆盖其他版本、不更改全局 `install-path`。
+5. 继续原来的 GameCI 私有构建及三份独立 age 加密产物（APK、AAB、日志）。
+
+此路线只解决**全局安装路径配置容易失败**这类问题，尚未在真实 macOS Runner 上完成下载、Android 模块安装和 APK/AAB 产物验证。历史路径配置方案在下面保留，仅供故障追溯，**不再是当前执行方案**。参见 [Unity CLI 官方发行说明](https://docs.unity.com/en-us/unity-cli/release-notes)。
+
+---
+
 ## Android 安装链路切换：新版独立 Unity CLI + 用户可写目录（2026-10-29）
 
 **最新确认的根因（Run 40905778356）：** 解密日志 `private-logs/unity-cli-editor-detail.log` 明确显示 `Access to the path '/Applications/Unity/Hub/Editor' is denied.`。在此之前，旧 CLI 的 `install-path --set` 曾输出 `This directory does not exist.`，但没有成功设置编辑器目录。受保护的系统路径写权限导致 Editor 安装立即失败，这一次没有进入下载阶段，也与 Unity 项目、Addressables 无关。
