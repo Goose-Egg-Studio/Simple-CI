@@ -117,9 +117,15 @@ def run():
         try:
             result = subprocess.run(["ps", "-axo", "comm="], capture_output=True, timeout=5, check=True)
             names = [os.path.basename(x.decode("utf-8", "replace")).lower() for x in result.stdout.splitlines()]
-            return sum("unity" in n for n in names), sum("game-ci" in n or "gameci" in n for n in names)
+            # "Unity Hub" and its helpers are NOT the Unity Editor.
+            # Counting every name containing "unity" previously claimed that
+            # Unity Editor was alive when the installer alone was running.
+            editor = sum(n == "unity" for n in names)
+            hub = sum(n.startswith("unity hub") or n.startswith("unityhub") for n in names)
+            gameci = sum("game-ci" in n or "gameci" in n for n in names)
+            return editor, hub, gameci
         except (OSError, subprocess.SubprocessError):
-            return -1, -1
+            return -1, -1, -1
 
     notice("Private Android build launched (T+0m)")
     with path.open("wb", buffering=0) as writer:
@@ -143,7 +149,7 @@ def run():
                     state["log_time"] = now
                 active = size > previous_size
                 previous_size = size
-                unity_count, gameci_count = process_counts()
+                editor_count, hub_count, gameci_count = process_counts()
                 info = {
                     "time_utc": datetime.now(timezone.utc).isoformat(),
                     "elapsed_seconds": int(now - start),
@@ -151,16 +157,19 @@ def run():
                     "phase_age_seconds": int(now - state["phase_time"]),
                     "last_log_activity_seconds": int(now - state["log_time"]),
                     "log_bytes": size,
-                    "unity_named_processes": unity_count,
+                    "editor_named_processes": editor_count,
+                    "hub_named_processes": hub_count,
                     "gameci_named_processes": gameci_count,
                     "free_gib": round(free_gib, 2),
                 }
                 with health_path.open("a", encoding="utf-8") as health:
                     health.write(json.dumps(info, ensure_ascii=True) + "\n")
                 disk = "low" if 0 <= free_gib < args.min_free_gib else "unknown" if free_gib < 0 else "ok"
-                notice("Heartbeat T+%dm; log=%s; unity-process=%s; disk=%s" % (
+                def presence(count):
+                    return "seen" if count > 0 else "not-seen" if count == 0 else "unknown"
+                notice("Heartbeat T+%dm; log=%s; editor=%s; hub=%s; disk=%s" % (
                     int((now - start) / 60), "growing" if active else "quiet",
-                    "seen" if unity_count > 0 else "not-seen" if unity_count == 0 else "unknown", disk))
+                    presence(editor_count), presence(hub_count), disk))
                 reason = None
                 if 0 <= free_gib < args.min_free_gib:
                     reason = "low disk space"
