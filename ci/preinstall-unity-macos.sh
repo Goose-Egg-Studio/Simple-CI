@@ -141,7 +141,7 @@ test -x "$EDITOR" || {
 
 printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_modules_start'
 run_cli_stage modules install-modules \
-  --editor-version "$VERSION" --module android --child-modules --accept-eula
+  -e "$VERSION" -m android --child-modules --accept-eula
 printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_modules_done'
 
 # Fail closed: missing Android components must never trigger the GameCI build.
