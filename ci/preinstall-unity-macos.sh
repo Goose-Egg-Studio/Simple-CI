@@ -59,8 +59,11 @@ run_cli_stage() {
   local result=0
   printf 'Unity CLI stage=%s\n' "$stage"
   set +e
-  "$CLI" "$@" > "$detail" 2>&1
-  result=$?
+  # tee keeps raw installation output private in safe-progress.py's
+  # encrypted log while allowing its independent activity watchdog to see
+  # downloader progress. Preserve CLI status rather than tee's status.
+  "$CLI" "$@" 2>&1 | tee "$detail"
+  result=${PIPESTATUS[0]}
   set -e
 
   if (( result != 0 )); then
@@ -70,8 +73,8 @@ run_cli_stage() {
       printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_elevation_retry'
       if sudo -n true; then
         set +e
-        sudo -n -H "$CLI" "$@" > "$SIMPLE_CI_LOG_DIR/unity-cli-${stage}-root-retry.log" 2>&1
-        result=$?
+        sudo -n -H "$CLI" "$@" 2>&1 | tee "$SIMPLE_CI_LOG_DIR/unity-cli-${stage}-root-retry.log"
+        result=${PIPESTATUS[0]}
         set -e
         detail="$SIMPLE_CI_LOG_DIR/unity-cli-${stage}-root-retry.log"
       else
