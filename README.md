@@ -64,12 +64,13 @@ Windows PowerShell 文件 Base64 示例：
 
 `ci/artifact-recipient.txt` 是**构建产物加密公钥**，Runner 只有公钥，没有产物解密权限。产物解密私钥必须留在授权维护者本机，不应放入任何 GitHub Secret。
 
-下载 `android-*.tar.age` 或 `ios-*.tar.age` 后，在本地执行：
+下载 `ios-*.tar.age` 后仍使用下方原有解密流程；Android 新格式为各自独立的 `.tar.gz.age`：
 
 ```bash
-age -d -i artifact-age-key.txt -o output.tar android-12345.tar.age
-tar -tf output.tar
-tar -xf output.tar
+age -d -i artifact-age-key.txt -o android-apk.tar.gz android-apk-12345.tar.gz.age
+tar -tzf android-apk.tar.gz
+tar -xzf android-apk.tar.gz
+# Android AAB / 诊断日志包仅需将上述文件名分别改为 android-aab / android-logs
 ```
 
 明文安装包和 Xcode 工程不得通过公开 Actions Artifact、Release 或 Cache 传播。iOS 上传 TestFlight 仍会由 Runner 向 Apple 提交已签名的明文 IPA。
@@ -90,5 +91,13 @@ Android 工作流 `.github/workflows/android.yml` 使用 **`macos-26-intel`**（
 - 原有 `ci/sealed/secure-ci-scripts.tar.age` 保留不变；另附同一公开接收方密钥加密的 `ci/sealed/macos-android-extra.age`，包含 macOS 构建入口和 Unity Editor CI 构建方法。无需配置新的 Secret。
 - Unity 构建前显式执行 Addressables 内容构建，并校验自定义加密 bundle 清单；APK/AAB 上传前还会检查包内的本地 bundle 与 manifest。失败只上传 age 加密诊断，不把完整 Unity 日志或未加密安装包公开。
 - macOS 标准 Runner 的磁盘和内存可能不足以同时安装 Unity、Android 模块、导入全部素材；因此第一次迁移仍需通过实际运行验证，不能仅凭 YAML 静态校验断言成功。
-- Android 构建结果仍是一个 `android-sealed-<run_id>` Artifact；解密后的 `private-logs/` 为诊断，`build-outputs/` 为 APK/AAB。
+- Android 成功构建将上传 **3 个相互独立的 age 加密压缩 Artifact**：`android-apk-sealed-<run_id>`、`android-aab-sealed-<run_id>`、`android-logs-sealed-<run_id>`。每个 Artifact 只包含一个 `.tar.gz.age`，分别是 `Simple.apk`、`Simple.aab`、`private-logs/`。失败时不会发布不完整 APK/AAB，但仍尽力上传独立的加密诊断包。
 
+
+### Android 构建健康检查与失败隔离
+
+新版本的安全监控脚本独立于 Unity 原始日志读取循环，每 60 秒在公开 Actions 日志输出固定格式的心跳，并把详细指标写入**仅包含在加密诊断 Artifact 中**的 `private-logs/health.jsonl`。记录包括 Unity/GameCI 进程数量（仅按进程名统计，不采集命令行）、日志增长、磁盘剩余空间、最近识别的构建阶段及距离该阶段的耗时。不公开项目资源名、原始日志、命令行、工作目录或 Secret 值。
+
+为了避免类似 Run 40823348411 出现长时间无阶段进展的情况，当前 Android 监控默认规则：连续 25 分钟无 Unity 原始日志增长、60 分钟没有识别到新的构建阶段，或磁盘剩余低于 1.5 GiB，都会主动中止该构建并尽力进入诊断加密上传。这些限制是排障保护阈值，并不表示 Unity 超过该时间一定死锁。识别器本身依赖固定关键词，部分合法 Unity 日志可能不会触发阶段变化。
+
+`if: always()` 只提供 **best-effort** 日志收集：手动取消、Runner 强制关闭、磁盘耗尽或 age 不可用时，GitHub 不保证诊断包成功上传。排查长时卡住时，建议让健康检查主动失败并走完收尾流程，而非直接取消 Run。每个加密包使用同一个公开 `ci/artifact-recipient.txt` 接收方；解密私钥依旧不应进入 GitHub。
