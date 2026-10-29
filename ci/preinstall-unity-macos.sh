@@ -44,7 +44,7 @@ printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_path_done'
 
 # Snapshot the exact command flags supported by the installed beta.
 # Detailed help/diagnostics are private and are age-sealed by the finalizer.
-unity install --help > "$SIMPLE_CI_LOG_DIR/unity-cli-install-help.txt" 2>&1
+unity install --help > "$SIMPLE_CI_LOG_DIR/unity-cli-install-help.txt" 2>&1 || true
 printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_editor_start'
 
 # The install starts without Unity Hub --headless. Unity CLI >= beta.9
@@ -82,11 +82,17 @@ if (( install_code != 0 )); then
 fi
 
 if (( install_code != 0 )); then
-  if grep -Eiq 'INVALID_COMMAND_ARGS|unknown option|unexpected argument|unrecognized option|unknown flag' "$DETAIL"; then
+  # After a root retry, classify from the retry log first. The initial
+  # privilege error may have been cleared, so it must not mask a new error.
+  CLASSIFY_LOG="$DETAIL"
+  if [ -s "$SIMPLE_CI_LOG_DIR/unity-cli-root-retry.log" ]; then
+    CLASSIFY_LOG="$SIMPLE_CI_LOG_DIR/unity-cli-root-retry.log"
+  fi
+  if grep -Eiq 'INVALID_COMMAND_ARGS|unknown option|unexpected argument|unrecognized option|unknown flag' "$CLASSIFY_LOG"; then
     printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_invalid_arguments'
-  elif grep -Eiq 'RELEASE_NOT_FOUND|VERSION_NOT_FOUND|EDITOR_NOT_FOUND|NOT_FOUND|No matching editor|unable to resolve.*changeset' "$DETAIL"; then
+  elif grep -Eiq 'RELEASE_NOT_FOUND|VERSION_NOT_FOUND|EDITOR_NOT_FOUND|NOT_FOUND|No matching editor|unable to resolve.*changeset' "$CLASSIFY_LOG"; then
     printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_release_unavailable'
-  elif grep -Eiq 'ELEVATION_FAILED|ELEVATION_CANCELLED|permission denied|administrator permission|administrator privileges|authorization failed' "$DETAIL"; then
+  elif grep -Eiq 'ELEVATION_FAILED|ELEVATION_CANCELLED|permission denied|administrator permission|administrator privileges|authorization failed' "$CLASSIFY_LOG"; then
     printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_elevation_failure'
   else
     printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_install_failed'
