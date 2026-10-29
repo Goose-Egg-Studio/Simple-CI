@@ -38,7 +38,8 @@ unity install "$VERSION" \
   --changeset "$CHANGESET" \
   --module android \
   --child-modules \
-  --architecture x86_64
+  --architecture x86_64 \
+  --non-interactive --yes --accept-eula
 printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_editor_done'
 
 # Fail closed: an incomplete install must never invoke the GameCI builder.
