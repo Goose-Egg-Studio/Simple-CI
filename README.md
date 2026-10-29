@@ -81,3 +81,14 @@ tar -xf output.tar
 - 禁止未经审查的 PR 代码在能够取得 Environment Secrets 的 Job 运行。
 - 固定和定期审核第三方 Actions；确保能修改默认分支和工作流的人员可信。
 - 不要把 `Library/`、明文构建产物、调试日志或本地密钥加入公开 Git 历史；`.gitignore` 不能代替人工审计。
+
+## Android CI 构建环境（2026-10-29 更新）
+
+Android 工作流 `.github/workflows/android.yml` 使用 **`macos-26-intel`**（macOS 26 / Intel x64，标准 GitHub-hosted runner）。原因是 Unity 2022.3 的 Linux Editor 无法导入项目中的 MP4 视频，导致 Addressables 打包失败，但原生 Player Build 仍可能报告成功。
+
+- 使用 **GameCI CLI v0.1.48 的 macOS 原生 Unity Editor/Hub 构建**，不使用 Linux Docker 镜像。
+- 原有 `ci/sealed/secure-ci-scripts.tar.age` 保留不变；另附同一公开接收方密钥加密的 `ci/sealed/macos-android-extra.age`，包含 macOS 构建入口和 Unity Editor CI 构建方法。无需配置新的 Secret。
+- Unity 构建前显式执行 Addressables 内容构建，并校验自定义加密 bundle 清单；APK/AAB 上传前还会检查包内的本地 bundle 与 manifest。失败只上传 age 加密诊断，不把完整 Unity 日志或未加密安装包公开。
+- macOS 标准 Runner 的磁盘和内存可能不足以同时安装 Unity、Android 模块、导入全部素材；因此第一次迁移仍需通过实际运行验证，不能仅凭 YAML 静态校验断言成功。
+- Android 构建结果仍是一个 `android-sealed-<run_id>` Artifact；解密后的 `private-logs/` 为诊断，`build-outputs/` 为 APK/AAB。
+
