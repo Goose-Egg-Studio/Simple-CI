@@ -132,6 +132,30 @@ jobs:
           bash "$RUNNER_TEMP/secure-ci/scripts/validate-simple.sh" project > "$RUNNER_TEMP/simple-private-logs/source-validation.log" 2>&1
           bash "$RUNNER_TEMP/secure-ci/scripts/check-version.sh" project 2022.3.62f3 >> "$RUNNER_TEMP/simple-private-logs/source-validation.log" 2>&1
 
+      # Use Unity's standalone CLI, not the Hub's legacy headless downloader.
+      # The existing sealed GameCI script will find this installed Editor at
+      # the standard path and skip its own Unity Hub Editor install.
+      - name: Preinstall Unity Editor and Android modules (standalone Unity CLI)
+        id: unity-preinstall
+        shell: bash
+        env:
+          SIMPLE_CI_LOG_DIR: ${{ runner.temp }}/simple-private-logs
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/simple-private-logs"
+          echo 'Preparing Android Unity toolchain using the standalone Unity CLI.'
+          if ! python3 -u ci/ci/safe-progress.py \
+              --log "$RUNNER_TEMP/simple-private-logs/unity-cli-install.log" \
+              --health-log "$RUNNER_TEMP/simple-private-logs/health-install.jsonl" \
+              --heartbeat 60 --max-no-phase 7200 --max-no-output 2700 \
+              --min-free-gib 1.5 -- \
+              bash ci/ci/preinstall-unity-macos.sh; then
+            echo 'Standalone Unity CLI installation failed. See encrypted diagnostics.'
+            exit 1
+          fi
+          echo 'Standalone Editor and Android support verified; starting private GameCI build.'
+
       - name: Build privately and retain diagnostics
         id: build
         shell: bash

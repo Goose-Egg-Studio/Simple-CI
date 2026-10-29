@@ -117,3 +117,18 @@ Android 工作流 `.github/workflows/android.yml` 使用 **`macos-26-intel`**（
 新的独立监控还统计 macOS 临时目录中 `unityhub*` 下载目录的大小变化（仅记录字节数，不上传文件内容或路径），并将显著磁盘占用增长作为粗略活动提示。公开日志仅显示 `installer-io=active/quiet`。详细的 `hub_temp_bytes`、`hub_temp_growth_bytes`、`disk_drop_gib`、`last_observed_activity_seconds` 保存在 age 加密的 `health.jsonl`。这只能减少误报：如果 Hub 将文件写到其他位置或磁盘变化来自其他进程，仍然需要结合 Unity Hub 日志判断。
 
 这是 **watchdog 误杀风险的修复，不是 Unity Hub 下载问题本身已解决的证明**。建议下一次观察 Hub 自身下载进度、实际安装完成标记；若仍无法安装，再考虑改用 Unity 官方独立 CLI 或预安装 Editor + Android 模块。不要因为超出 25 分钟没有普通日志就手动取消构建。
+
+## Android 安装链路切换：独立 Unity CLI（试验性）
+
+此前 macOS Runner 上的 GameCI v0.1.48 调用 Unity Hub 3.21.0 的 `--headless install --childModules`，多次停在 Unity Editor 及 Android SDK/NDK 下载阶段。新流程不再依赖此安装器完成 Editor 的下载：
+
+1. 从 Homebrew 官方 `unity-cli` cask 安装 **Unity 独立 CLI**（`brew install --cask unity-cli`），无需在安装阶段调用 Unity Hub。
+2. 用 Unity CLI 安装 **Unity 2022.3.62f3 / changeset 96770f904ca7 / x86_64**，同时指定 `android` 及其子模块（SDK、NDK、OpenJDK）：`unity install 2022.3.62f3 --changeset 96770f904ca7 --module android --child-modules --architecture x86_64`。
+3. 安装后严格检查 `/Applications/Unity/Hub/Editor/2022.3.62f3/Unity.app/Contents/MacOS/Unity`、`PlaybackEngines/AndroidPlayer`、`SDK/`、`NDK/` 和 `OpenJDK/`；任何缺失均直接判失败，不进入构建。
+4. 然后才调用原有 age 解封的 GameCI 构建脚本，继续构建 Addressables、签名 APK/AAB；后者仍可能为兼容性初始化 Unity Hub，但理论上应复用现有 Editor，**不再通过 Hub 下载 Editor**。
+
+独立安装的 stdout/stderr 仍全部由 `ci/safe-progress.py` 写入私有 `unity-cli-install.log`，安装健康数据写入 `health-install.jsonl`；公开 Actions 只显示固定阶段与健康标记。两份文件均进入既有的 **单独 age 加密诊断 Artifact**，APK、AAB、日志继续分别加密上传。
+
+**注意：**独立 Unity CLI 仍属实验性。新增路径尚未在真正的 GitHub macOS Runner 上验证；GameCI 是否认可独立 CLI 安装位置及完整子模块仍需一次实际构建确认。如果 Unity CLI 的安装路径设置选项不可用，脚本会检查默认位置并在位置不匹配时失败，不会悄悄退回 Hub 下载。
+
+参考：Unity 官方 [2022.3.62f3 发布页](https://unity.com/releases/editor/whats-new/2022.3.62f3)、[Unity CLI 用法](https://docs.unity.com/en-us/unity-cli/use-unity-cli) 和 [CLI 命令参考](https://docs.unity.com/en-us/unity-cli/unity-cli-reference)。
