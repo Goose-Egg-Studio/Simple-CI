@@ -1,38 +1,54 @@
 #!/usr/bin/env python3
-"""Emit only allow-listed phase/status events while preserving private Unity logs.
+"""Stream allow-listed phase notices, never unfiltered Unity output.
 
-This runner-side monitor never prints, uploads, or interpolates source log lines.
-All subprocess stdout/stderr goes exclusively into the age-encrypted diagnostics
-pipeline; stdout here contains constant messages and elapsed durations only.
+The full subprocess stream is written to the local private log file and later
+included ONLY in the age-encrypted diagnostic artifact. Public Actions logs
+get constant phase names, elapsed minutes, and constant failure categories.
 """
 import argparse
-import re
 import subprocess
 import sys
 import time
 from pathlib import Path
 
-PHASES = (
-    ("image", "Preparing Unity container", (b"Pulling from unityci/editor", b"running docker process for linux")),
-    ("license", "Online license activation requested", (b"Requesting activation (professional license)",)),
-    ("license_ok", "Unity license activated", (b"Activation complete.",)),
-    ("project", "Unity project build started", (b"#    Building project",)),
+# The phase marker names are fixed strings emitted by sealed scripts.
+SAFE_SCRIPT_PHASES = {
+    b"SIMPLE_CI_PHASE=android_apk_start": "APK: Unity build started",
+    b"SIMPLE_CI_PHASE=android_apk_done": "APK: build completed",
+    b"SIMPLE_CI_PHASE=android_apk_failed": "APK: build failed",
+    b"SIMPLE_CI_PHASE=android_aab_start": "AAB: Unity build started",
+    b"SIMPLE_CI_PHASE=android_aab_done": "AAB: build completed",
+    b"SIMPLE_CI_PHASE=android_aab_failed": "AAB: build failed",
+    b"SIMPLE_CI_PHASE=android_stage_start": "Staging signed APK and AAB",
+    b"SIMPLE_CI_PHASE=android_stage_done": "APK and AAB staged for encryption",
+}
+
+EDITOR_PHASES = (
+    ("image", "Unity container preparation", (b"Pulling from unityci/editor", b"running docker process for linux")),
+    ("license", "Unity online license activation requested", (b"Requesting activation (professional license)",)),
+    ("license_ok", "Unity license activated successfully", (b"Activation complete.",)),
+    ("project", "Unity project build entered", (b"#    Building project",)),
     ("packages", "Unity packages resolved", (b"[Package Manager] Done resolving packages",)),
     ("assets", "Unity asset import started", (b"Application.AssetDatabase Initial Refresh Start",)),
-    ("scripts", "Unity script compilation started", (b"[ScriptCompilation] Requested script compilation",)),
+    ("scripts", "Unity C# script compilation started", (b"[ScriptCompilation] Requested script compilation",)),
+    ("buildplayer", "Unity BuildPlayer entered", (b"BuildPlayer: building player", b"BuildPlayerWindow.DefaultBuildMethods.BuildPlayer", b"Building Player",)),
 )
 
-# Literal, fixed-category diagnostics only. Never print any matched bytes.
+# Do not copy the matched line into stdout. Labels are fixed and independent
+# of private file names, compiler diagnostics, passwords, or argument values.
 FAILURE_MARKERS = (
-    ("License activation", (b"Unclassified error occured while trying to activate license", b"License activation has failed")),
-    ("C# compilation", (b"error CS",)),
+    ("License", (b"Unclassified error occured while trying to activate license", b"License activation has failed")),
+    ("C# compiler", (b"error CS",)),
     ("Android signing", (b"Unable to sign the application; please provide passwords!", b"Can not sign the application")),
-    ("Addressables content", (b"Addressable content build failure", b"Failed to build Addressables content")),
-    ("Asset/media import", (b"Asset import failed for using an unsupported file type",)),
+    ("Addressables", (b"Addressable content build failure", b"Failed to build Addressables content")),
+    ("Asset/video importer", (b"Asset import failed for using an unsupported file type",)),
+    ("Unity crash", (b"Segmentation fault", b"Fatal error in GC", b"Caught fatal signal",)),
 )
+
 
 def notice(message):
     print("::notice title=Simple CI phase::" + message, flush=True)
+
 
 def run():
     parser = argparse.ArgumentParser()
@@ -40,9 +56,7 @@ def run():
     parser.add_argument("--heartbeat", type=int, default=60)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
-    command = args.command
-    if command and command[0] == "--":
-        command = command[1:]
+    command = args.command[1:] if args.command and args.command[0] == "--" else args.command
     if not command:
         parser.error("missing build command")
     if args.heartbeat < 20:
@@ -52,64 +66,65 @@ def run():
     path.parent.mkdir(parents=True, exist_ok=True)
     start = time.monotonic()
     last_ping = start
-    seen_phases = set()
+    seen_editor_phases = set()
+    seen_script_phases = set()
     detected_failures = set()
-    pending = b""
+    incomplete_line = b""
 
-    notice("Build process launched; Unity details are private (T+0m)")
-    with path.open("wb", buffering=0) as log_writer:
-        process = subprocess.Popen(command, stdout=log_writer, stderr=subprocess.STDOUT)
+    def report(line):
+        nonlocal seen_editor_phases
+        event = line.strip()
+        if event in SAFE_SCRIPT_PHASES and event not in seen_script_phases:
+            seen_script_phases.add(event)
+            notice(SAFE_SCRIPT_PHASES[event] + " (T+" + str(int((time.monotonic() - start) / 60)) + "m)")
+            if event in (b"SIMPLE_CI_PHASE=android_apk_start", b"SIMPLE_CI_PHASE=android_aab_start"):
+                seen_editor_phases.clear()
+        for key, label, markers in EDITOR_PHASES:
+            if key not in seen_editor_phases and any(marker in line for marker in markers):
+                seen_editor_phases.add(key)
+                notice(label + " (T+" + str(int((time.monotonic() - start) / 60)) + "m)")
+        for key, markers in FAILURE_MARKERS:
+            if any(marker in line for marker in markers):
+                detected_failures.add(key)
 
-        with path.open("rb", buffering=0) as log_reader:
+    notice("Private Unity build launched (T+0m)")
+    with path.open("wb", buffering=0) as writer:
+        proc = subprocess.Popen(command, stdout=writer, stderr=subprocess.STDOUT)
+        with path.open("rb", buffering=0) as reader:
             while True:
-                chunk = log_reader.read(1024 * 1024)
+                chunk = reader.read(1024 * 1024)
                 if chunk:
-                    pending += chunk
-                    *lines, pending = pending.split(b"\n")
+                    incomplete_line += chunk
+                    *lines, incomplete_line = incomplete_line.split(b"\n")
                     for line in lines:
-                        # A line may include Unity paths, signing arguments or IDs.
-                        # Only fixed phrases from PHASES can ever reach stdout.
-                        for key, label, markers in PHASES:
-                            if key not in seen_phases and any(marker in line for marker in markers):
-                                seen_phases.add(key)
-                                notice(label + " (T+" + str(int((time.monotonic() - start) / 60)) + "m)")
-                        for key, markers in FAILURE_MARKERS:
-                            if any(marker in line for marker in markers):
-                                detected_failures.add(key)
+                        report(line)
                     continue
-
-                if process.poll() is not None:
-                    if pending:
-                        for key, markers in FAILURE_MARKERS:
-                            if any(marker in pending for marker in markers):
-                                detected_failures.add(key)
+                if proc.poll() is not None:
+                    if incomplete_line:
+                        report(incomplete_line)
                     break
-
                 if time.monotonic() - last_ping >= args.heartbeat:
-                    notice("Build still running; raw logs remain sealed (T+" +
+                    notice("Unity build is still running; raw log is private (T+" +
                            str(int((time.monotonic() - start) / 60)) + "m)")
                     last_ping = time.monotonic()
                 time.sleep(2)
+        code = proc.wait()
 
-        return_code = process.wait()
-
-    if return_code == 0:
-        notice("GameCI build command completed successfully")
+    if code == 0:
+        notice("Build command completed successfully")
     else:
-        # No raw lines, filenames, credentials or user-controlled strings.
-        labels = ", ".join(name for name, _ in FAILURE_MARKERS if name in detected_failures)
+        labels = ", ".join(k for k, _ in FAILURE_MARKERS if k in detected_failures)
         if not labels:
-            labels = "Unclassified build failure"
-        print("::error title=Simple CI build::Build command failed. "
-              "Detected category: " + labels +
-              ". Read age-encrypted diagnostics for details.", flush=True)
-    return return_code if return_code >= 0 else 128 + abs(return_code)
+            labels = "Unclassified failure"
+        print("::error title=Simple CI build::Build failed (" + labels +
+              "). See age-encrypted diagnostics for exact errors.", flush=True)
+    return code if code >= 0 else 128 + abs(code)
+
 
 if __name__ == "__main__":
     try:
         sys.exit(run())
     except Exception:
-        # Keep exception details out of public logs (they may contain paths).
         print("::error title=Simple CI monitor::Progress monitor failed; "
-              "check encrypted diagnostics.", flush=True)
+              "see encrypted diagnostics.", flush=True)
         sys.exit(125)
