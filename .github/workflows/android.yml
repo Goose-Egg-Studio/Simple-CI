@@ -174,28 +174,6 @@ jobs:
           done
           echo 'CI preflight passed: license and Android signing credentials configured.'
 
-          # Preserve encrypted build scripts as-is. Wrap only the ephemeral
-          # GameCI CLI installed on this runner, adding signing options that
-          # otherwise reach Unity as empty values. The raw CLI output is private.
-          GAME_CI_BINARY="$RUNNER_TEMP/game-ci/bin/game-ci"
-          test -x "$GAME_CI_BINARY" || { echo 'GameCI executable missing'; exit 1; }
-          mv "$GAME_CI_BINARY" "${GAME_CI_BINARY}.real"
-          cat > "$GAME_CI_BINARY" <<'SH_GAMECI_SIGNING'
-          #!/usr/bin/env bash
-          set -euo pipefail
-          REAL="${BASH_SOURCE[0]}.real"
-          if [[ "${1-}" == "build" ]]; then
-            exec "$REAL" "$@" \
-              --androidKeystoreName "simple.keystore" \
-              --androidKeystorePass "$ANDROID_KEYSTORE_PASS" \
-              --androidKeyAliasName "$ANDROID_KEYALIAS_NAME" \
-              --androidKeyAliasPass "$ANDROID_KEYALIAS_PASS"
-          fi
-          exec "$REAL" "$@"
-          SH_GAMECI_SIGNING
-          chmod 700 "$GAME_CI_BINARY"
-          echo 'GameCI Android signing adapter installed (no secret values logged).'
-
           # The monitor writes the entire Unity stdout/stderr to a PRIVATE file,
           # and emits only allow-listed phase names and known error categories
           # to the public GitHub Actions console. Never tail or grep raw lines
