@@ -2,8 +2,10 @@
 # Install the precise macOS Intel Unity Editor and all Android dependencies
 # using the standalone Unity CLI, before invoking the sealed GameCI build.
 # The parent safe-progress monitor captures ALL output into a private file.
-set -euo pipefail
+set -Eeuo pipefail
 umask 077
+# Diagnostic line and exit status stay inside the separately age-encrypted logs.
+trap 'status=$?; printf "Unity installer shell failed at line %s (exit %s)\\n" "$LINENO" "$status" >&2' ERR
 
 : "${SIMPLE_CI_LOG_DIR:?private logging directory required}"
 mkdir -p "$SIMPLE_CI_LOG_DIR"
@@ -22,14 +24,23 @@ command -v unity >/dev/null
 unity --version
 printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_bootstrap_done'
 
-# Canonical path expected by GameCI v0.1.48 SetupMac.
-sudo mkdir -p "$INSTALL_ROOT"
-sudo chown "$(id -u):$(id -g)" "$INSTALL_ROOT"
-if unity install-path --help | grep -q -- '--set'; then
-  unity install-path --set "$INSTALL_ROOT"
+# The previous runner exited before the Editor install marker, inside
+# this path preparation block. Do not make a non-essential path setter a
+# fatal prerequisite: the final component gate below remains fail-closed.
+printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_path_start'
+if sudo -n mkdir -p "$INSTALL_ROOT" && sudo -n chown "$(id -u):$(id -g)" "$INSTALL_ROOT"; then
+  echo 'Unity Editor installation directory prepared.'
 else
-  echo 'Unity CLI install-path setting unavailable; verifying standard path after install.'
+  echo 'Unable to prepare standard Editor directory; CLI installation will still be attempted.'
 fi
+if unity install-path --set "$INSTALL_ROOT"; then
+  echo 'Unity CLI Editor path configured.'
+elif unity editors install-path --set "$INSTALL_ROOT"; then
+  echo 'Unity CLI Editor path configured using editors subcommand.'
+else
+  echo 'Unity CLI path configuration failed; proceeding to install and verifying final location.'
+fi
+printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_path_done'
 
 printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_editor_start'
 # Intentionally bypass Unity Hub --headless. Do not emit raw CLI output to
