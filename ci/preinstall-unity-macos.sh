@@ -47,68 +47,80 @@ printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_path_done'
 unity install --help > "$SIMPLE_CI_LOG_DIR/unity-cli-install-help.txt" 2>&1 || true
 printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_editor_start'
 
-# The install starts without Unity Hub --headless. Unity CLI >= beta.9
-# requests macOS administrator authorization *before* downloading; that
-# request may fail immediately when there is no interactive desktop.
-#
-# First try unprivileged; retry as root ONLY for known elevation/permission
-# failures. No retry for invalid options, missing releases or other errors.
-# tee is safe here: safe-progress captures *all* stdout privately.
+# The install starts without Unity Hub --headless. Separate Editor and
+# Android module operations to isolate usage errors instead of repeatedly
+# changing a six-flag invocation without concrete CLI diagnostic evidence.
 CLI="$(command -v unity)"
-DETAIL="$SIMPLE_CI_LOG_DIR/unity-cli-install-detail.log"
-# Use the smallest documented unattended install invocation.  The CLI
-# is already running without a TTY, so the optional global
-# --non-interactive/--format flags are not needed here; beta variants can
-# reject unexpected combinations as INVALID_COMMAND_ARGS.
-# -m android --cm is the documented Android + SDK/NDK/OpenJDK path.
-INSTALL_ARGS=(install "$VERSION" --changeset "$CHANGESET"
-  --module android --child-modules --architecture x86_64
-  --yes --accept-eula)
 
-set +e
-"$CLI" "${INSTALL_ARGS[@]}" 2>&1 | tee "$DETAIL"
-install_code=${PIPESTATUS[0]}
-set -e
+run_cli_stage() {
+  local stage="$1"
+  shift
+  local detail="$SIMPLE_CI_LOG_DIR/unity-cli-${stage}-detail.log"
+  local result=0
+  printf 'Unity CLI stage=%s\n' "$stage"
+  set +e
+  "$CLI" "$@" > "$detail" 2>&1
+  result=$?
+  set -e
 
-if (( install_code != 0 )); then
-  if grep -Eiq 'ELEVATION_FAILED|ELEVATION_CANCELLED|permission denied|administrator permission|administrator privileges|authorization failed' "$DETAIL"; then
-    printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_elevation_retry'
-    # GitHub macOS hosted runners provide noninteractive sudo. Use the full
-    # executable path; don't source login profiles or copy project secrets.
-    if sudo -n true; then
-      set +e
-      sudo -n -H "$CLI" "${INSTALL_ARGS[@]}" 2>&1 | tee "$SIMPLE_CI_LOG_DIR/unity-cli-root-retry.log"
-      install_code=${PIPESTATUS[0]}
-      set -e
-    else
-      printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_elevation_unavailable'
+  if (( result != 0 )); then
+    # Only retry a real authorization/elevation error. An argument usage
+    # error (code 2) must never be hidden by another invocation.
+    if grep -Eiq 'ELEVATION_FAILED|ELEVATION_CANCELLED|permission denied|administrator permission|administrator privileges|authorization failed' "$detail"; then
+      printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_elevation_retry'
+      if sudo -n true; then
+        set +e
+        sudo -n -H "$CLI" "$@" > "$SIMPLE_CI_LOG_DIR/unity-cli-${stage}-root-retry.log" 2>&1
+        result=$?
+        set -e
+        detail="$SIMPLE_CI_LOG_DIR/unity-cli-${stage}-root-retry.log"
+      else
+        printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_elevation_unavailable'
+      fi
     fi
   fi
-fi
 
-if (( install_code != 0 )); then
-  # After a root retry, classify from the retry log first. The initial
-  # privilege error may have been cleared, so it must not mask a new error.
-  CLASSIFY_LOG="$DETAIL"
-  if [ -s "$SIMPLE_CI_LOG_DIR/unity-cli-root-retry.log" ]; then
-    CLASSIFY_LOG="$SIMPLE_CI_LOG_DIR/unity-cli-root-retry.log"
+  if (( result != 0 )); then
+    # Only publish a fixed category, never arbitrary CLI output, paths,
+    # machine/environment details, or Unity licensing information.
+    if (( result == 2 )) || grep -Eiq 'INVALID_COMMAND_ARGS|unknown option|unexpected argument|unrecognized option|unknown flag' "$detail"; then
+      printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_invalid_arguments'
+    elif grep -Eiq 'RELEASE_NOT_FOUND|VERSION_NOT_FOUND|EDITOR_NOT_FOUND|No matching editor|unable to resolve.*changeset' "$detail"; then
+      printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_release_unavailable'
+    elif grep -Eiq 'ELEVATION_FAILED|ELEVATION_CANCELLED|permission denied|administrator permission|administrator privileges|authorization failed' "$detail"; then
+      printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_elevation_failure'
+    else
+      printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_install_failed'
+    fi
+    printf 'Unity CLI stage %s failed with exit status %d; see encrypted diagnostics.\n' "$stage" "$result" >&2
+    return "$result"
   fi
-  if grep -Eiq 'INVALID_COMMAND_ARGS|unknown option|unexpected argument|unrecognized option|unknown flag' "$CLASSIFY_LOG"; then
-    printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_invalid_arguments'
-  elif grep -Eiq 'RELEASE_NOT_FOUND|VERSION_NOT_FOUND|EDITOR_NOT_FOUND|NOT_FOUND|No matching editor|unable to resolve.*changeset' "$CLASSIFY_LOG"; then
-    printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_release_unavailable'
-  elif grep -Eiq 'ELEVATION_FAILED|ELEVATION_CANCELLED|permission denied|administrator permission|administrator privileges|authorization failed' "$CLASSIFY_LOG"; then
-    printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_elevation_failure'
-  else
-    printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_install_failed'
-  fi
-  printf 'Unity CLI install failed with exit status %d. Details remain in encrypted diagnostics.\n' "$install_code" >&2
-  exit "$install_code"
-fi
+}
+
+# First, install only the core Editor. This is the smallest documented
+# unattended invocation retaining the exact project's pinned changeset.
+printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_editor_start'
+run_cli_stage editor install "$VERSION" \
+  --changeset "$CHANGESET" \
+  --yes --accept-eula
 printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_editor_done'
 
+if ! test -x "$EDITOR"; then
+  printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_editor_path_invalid'
+  echo 'Unity Editor binary missing at GameCI expected path after install.' >&2
+  exit 32
+fi
+
+# Then install Android Build Support and its bundled SDK, NDK, OpenJDK.
+# Isolating this stage reveals incompatibility with old 2022.3 module IDs,
+# without retrying an already successful Editor download.
+printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_modules_start'
+run_cli_stage modules install-modules \
+  --editor-version "$VERSION" \
+  --module android --child-modules --accept-eula
+printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_modules_done'
+
 # Fail closed: an incomplete install must never invoke the GameCI builder.
-test -x "$EDITOR" || { echo 'Independent CLI install did not place Editor at GameCI expected path'; exit 32; }
 test -d "$ANDROID" || { echo 'Android Build Support missing after Unity CLI install'; exit 33; }
 test -d "$ANDROID/SDK" || { echo 'Unity-bundled Android SDK missing'; exit 34; }
 test -d "$ANDROID/NDK" || { echo 'Unity-bundled Android NDK missing'; exit 35; }
