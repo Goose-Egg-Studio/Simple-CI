@@ -7,6 +7,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from datetime import datetime, timezone
@@ -49,8 +50,8 @@ def run():
     parser.add_argument("--log", required=True)
     parser.add_argument("--health-log", required=True)
     parser.add_argument("--heartbeat", type=int, default=60)
-    parser.add_argument("--max-no-phase", type=int, default=3600)
-    parser.add_argument("--max-no-output", type=int, default=1500)
+    parser.add_argument("--max-no-phase", type=int, default=7200)
+    parser.add_argument("--max-no-output", type=int, default=2700)
     parser.add_argument("--min-free-gib", type=float, default=1.5)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
@@ -63,7 +64,7 @@ def run():
     path.parent.mkdir(parents=True, exist_ok=True)
     health_path.parent.mkdir(parents=True, exist_ok=True)
     start = time.monotonic()
-    state = {"phase": "startup", "phase_time": start, "log_time": start}
+    state = {"phase": "startup", "phase_time": start, "log_time": start, "progress_time": start}
     seen_editor = set()
     seen_script = set()
     failures = set()
@@ -127,6 +128,38 @@ def run():
         except (OSError, subprocess.SubprocessError):
             return -1, -1, -1
 
+    def hub_temp_bytes():
+        # Unity Hub downloads to the macOS temporary directory by default.
+        # Observe total bytes only; do not retain or print private file paths.
+        # This is best-effort (Hub versions may use a different directory).
+        root = Path(tempfile.gettempdir())
+        total = 0
+        seen = 0
+        try:
+            for candidate in root.glob("unityhub*"):
+                if candidate.is_symlink():
+                    continue
+                if candidate.is_file():
+                    total += candidate.stat().st_size
+                    continue
+                if not candidate.is_dir():
+                    continue
+                for parent, directories, files in os.walk(candidate, followlinks=False):
+                    directories[:] = [d for d in directories if not (Path(parent) / d).is_symlink()]
+                    for name in files:
+                        item = Path(parent) / name
+                        if not item.is_symlink():
+                            try:
+                                total += item.stat().st_size
+                            except OSError:
+                                continue
+                        seen += 1
+                        if seen > 20000:
+                            return total
+            return total
+        except OSError:
+            return -1
+
     notice("Private Android build launched (T+0m)")
     with path.open("wb", buffering=0) as writer:
         proc = subprocess.Popen(command, stdout=writer, stderr=subprocess.STDOUT, start_new_session=True)
@@ -138,6 +171,8 @@ def run():
 
         def heartbeat():
             previous_size = 0
+            previous_free_gib = None
+            previous_hub_bytes = None
             while not stop.wait(args.heartbeat):
                 now = time.monotonic()
                 try:
@@ -145,10 +180,23 @@ def run():
                     free_gib = shutil.disk_usage(os.environ.get("RUNNER_TEMP", str(path.parent))).free / (1024 ** 3)
                 except OSError:
                     size, free_gib = previous_size, -1
-                if size > previous_size:
-                    state["log_time"] = now
                 active = size > previous_size
+                if active:
+                    state["log_time"] = now
                 previous_size = size
+                hub_bytes = hub_temp_bytes()
+                hub_growth = (max(0, hub_bytes - previous_hub_bytes)
+                              if hub_bytes >= 0 and previous_hub_bytes is not None and previous_hub_bytes >= 0
+                              else 0)
+                previous_hub_bytes = hub_bytes
+                # A large reduction in free space is a coarse installation
+                # progress hint, not proof that Unity itself is writing.
+                disk_drop = (max(0.0, previous_free_gib - free_gib)
+                             if previous_free_gib is not None and free_gib >= 0 else 0.0)
+                previous_free_gib = free_gib if free_gib >= 0 else previous_free_gib
+                disk_activity = disk_drop >= 0.05
+                if active or hub_growth >= 1024 * 1024 or disk_activity:
+                    state["progress_time"] = now
                 editor_count, hub_count, gameci_count = process_counts()
                 info = {
                     "time_utc": datetime.now(timezone.utc).isoformat(),
@@ -156,7 +204,11 @@ def run():
                     "last_phase": state["phase"],
                     "phase_age_seconds": int(now - state["phase_time"]),
                     "last_log_activity_seconds": int(now - state["log_time"]),
+                    "last_observed_activity_seconds": int(now - state["progress_time"]),
                     "log_bytes": size,
+                    "hub_temp_bytes": hub_bytes,
+                    "hub_temp_growth_bytes": hub_growth,
+                    "disk_drop_gib": round(disk_drop, 3),
                     "editor_named_processes": editor_count,
                     "hub_named_processes": hub_count,
                     "gameci_named_processes": gameci_count,
@@ -167,14 +219,15 @@ def run():
                 disk = "low" if 0 <= free_gib < args.min_free_gib else "unknown" if free_gib < 0 else "ok"
                 def presence(count):
                     return "seen" if count > 0 else "not-seen" if count == 0 else "unknown"
-                notice("Heartbeat T+%dm; log=%s; editor=%s; hub=%s; disk=%s" % (
+                notice("Heartbeat T+%dm; log=%s; installer-io=%s; editor=%s; hub=%s; disk=%s" % (
                     int((now - start) / 60), "growing" if active else "quiet",
+                    "active" if hub_growth >= 1024 * 1024 or disk_activity else "quiet",
                     presence(editor_count), presence(hub_count), disk))
                 reason = None
                 if 0 <= free_gib < args.min_free_gib:
                     reason = "low disk space"
-                elif args.max_no_output > 0 and now - state["log_time"] >= args.max_no_output:
-                    reason = "no log output within limit"
+                elif args.max_no_output > 0 and now - state["progress_time"] >= args.max_no_output:
+                    reason = "no observable build or installer activity within limit"
                 elif args.max_no_phase > 0 and now - state["phase_time"] >= args.max_no_phase:
                     reason = "no recognized build phase within limit"
                 if reason and proc.poll() is None:
@@ -191,6 +244,7 @@ def run():
                 chunk = reader.read(65536)
                 if chunk:
                     state["log_time"] = time.monotonic()
+                    state["progress_time"] = state["log_time"]
                     pending += chunk
                     *lines, pending = pending.split(b"\n")
                     for line in lines:
