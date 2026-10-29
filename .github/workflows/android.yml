@@ -274,6 +274,9 @@ jobs:
           set -euo pipefail
           umask 077
           mkdir -p "$RUNNER_TEMP/simple-private-logs" encrypted
+          # Collect Unity Hub's installation logs before age encryption.
+          # Hub logging is separate from the Unity Editor.log.
+          python3 ci/ci/capture-unity-hub.py > /dev/null 2>&1 || true
           printf 'Finalizer started; job status: %s\n' "${{ job.status }}" >> "$RUNNER_TEMP/simple-private-logs/build-status.txt"
           if [ -d "$RUNNER_TEMP/simple-private-logs/licensing-client" ]; then
             sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/simple-private-logs/licensing-client" || true
