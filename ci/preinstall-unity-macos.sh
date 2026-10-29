@@ -121,7 +121,16 @@ test -d "$LOCAL_ANDROID/OpenJDK" || { echo 'Unity-bundled Android OpenJDK missin
 # pinned version; never replace/remove the root or unrelated installations.
 # All actual Editor files stay in the runner-owned self-contained directory.
 printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_path_start'
-sudo -n mkdir -p "$STANDARD_ROOT"
+if [[ -L "$STANDARD_ROOT" ]]; then
+  printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_path_failure'
+  echo 'Unexpected GameCI Editor root symlink; refusing to traverse it.' >&2
+  exit 52
+fi
+if ! sudo -n mkdir -p "$STANDARD_ROOT"; then
+  printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_path_failure'
+  echo 'Unable to create the standard GameCI Editor parent directory.' >&2
+  exit 53
+fi
 STANDARD_VERSION="$STANDARD_ROOT/$VERSION"
 if [[ -L "$STANDARD_VERSION" ]]; then
   if [[ "$(readlink "$STANDARD_VERSION")" != "$EDITOR_DIR" ]]; then
