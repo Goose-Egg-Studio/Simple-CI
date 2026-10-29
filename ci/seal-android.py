@@ -100,7 +100,10 @@ def seal(source, arcname, destination, recipient, compression=1):
             raise RuntimeError("empty-age-file")
         temp.replace(destination)
         return True
-    except Exception:
+    except Exception as exc:
+        # Caller redirects stderr to a private file; never expose this on
+        # public Actions stdout because exceptions may contain private paths.
+        print("seal-error={} {}".format(type(exc).__name__, str(exc)), file=sys.stderr)
         temp.unlink(missing_ok=True)
         return False
 
