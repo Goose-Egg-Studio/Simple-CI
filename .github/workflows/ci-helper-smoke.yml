@@ -1,0 +1,30 @@
+name: CI helper smoke tests (no secrets)
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/android.yml
+      - .github/workflows/ci-helper-smoke.yml
+      - ci/safe-progress.py
+      - ci/seal-android.py
+      - ci/tests/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Syntax check public helper scripts
+        run: python -m py_compile ci/safe-progress.py ci/seal-android.py
+      - name: Test encrypted artifact boundaries with dummy data
+        run: python -m unittest discover -s ci/tests -v
