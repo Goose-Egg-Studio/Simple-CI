@@ -16,8 +16,8 @@ from pathlib import Path
 SAFE_SCRIPT_PHASES = {
     b"SIMPLE_CI_PHASE=unity_cli_bootstrap_start": "Standalone Unity CLI bootstrap started",
     b"SIMPLE_CI_PHASE=unity_cli_bootstrap_done": "Standalone Unity CLI installed",
-    b"SIMPLE_CI_PHASE=unity_cli_path_start": "Unity CLI Editor path configuration started",
-    b"SIMPLE_CI_PHASE=unity_cli_path_done": "Unity CLI Editor path configuration completed",
+    b"SIMPLE_CI_PHASE=unity_cli_path_start": "GameCI compatibility Editor symlink creation started",
+    b"SIMPLE_CI_PHASE=unity_cli_path_done": "GameCI compatibility Editor symlink validated",
     b"SIMPLE_CI_PHASE=unity_cli_path_failure": "GameCI Editor compatibility path preparation failed",
     b"SIMPLE_CI_PHASE=unity_cli_download_directory_unsupported": "Unity CLI self-contained installation is unsupported",
     b"SIMPLE_CI_PHASE=unity_cli_editor_start": "Standalone Unity Editor core install started",
