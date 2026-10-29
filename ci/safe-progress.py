@@ -16,6 +16,8 @@ from pathlib import Path
 SAFE_SCRIPT_PHASES = {
     b"SIMPLE_CI_PHASE=unity_cli_bootstrap_start": "Standalone Unity CLI bootstrap started",
     b"SIMPLE_CI_PHASE=unity_cli_bootstrap_done": "Standalone Unity CLI installed",
+    b"SIMPLE_CI_PHASE=unity_cli_path_start": "Unity CLI Editor path configuration started",
+    b"SIMPLE_CI_PHASE=unity_cli_path_done": "Unity CLI Editor path configuration completed",
     b"SIMPLE_CI_PHASE=unity_cli_editor_start": "Standalone Editor and Android modules install started",
     b"SIMPLE_CI_PHASE=unity_cli_editor_done": "Standalone Editor and Android modules install completed",
     b"SIMPLE_CI_PHASE=unity_cli_validated": "Unity Editor and Android components verified",
