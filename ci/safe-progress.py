@@ -70,7 +70,7 @@ def detect_processes():
 
 
 def stop_process(proc):
-    """Stop all children of the sealed shell, not just its direct parent."""
+    """Terminate the entire sealed process group and enforce a short grace."""
     if proc.poll() is not None:
         return
     try:
@@ -79,7 +79,18 @@ def stop_process(proc):
         try:
             proc.terminate()
         except ProcessLookupError:
-            pass
+            return
+    deadline = time.monotonic() + 15
+    while proc.poll() is None and time.monotonic() < deadline:
+        time.sleep(1)
+    if proc.poll() is None:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
 
 
 def run():
