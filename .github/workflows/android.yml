@@ -133,6 +133,7 @@ jobs:
           bash "$RUNNER_TEMP/secure-ci/scripts/check-version.sh" project 2022.3.62f3 >> "$RUNNER_TEMP/simple-private-logs/source-validation.log" 2>&1
 
       - name: Build privately and retain diagnostics
+        id: android_build
         shell: bash
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
@@ -198,7 +199,7 @@ jobs:
           echo 'Starting sealed macOS Unity build with safe live progress reporting.'
           if ! python3 -u ci/ci/safe-progress.py \
               --log "$RUNNER_TEMP/simple-private-logs/unity-build.log" \
-              --heartbeat 60 -- \
+              --heartbeat 60 --stall-minutes 35 --max-minutes 115 -- \
               bash "$RUNNER_TEMP/secure-ci/scripts/mac-build-android.sh"; then
             echo 'macOS Unity build failed; see age-encrypted diagnostics.'
             exit 1
@@ -212,9 +213,10 @@ jobs:
           fi
           echo 'Unity build command completed; final artifact checks are handled by sealed CI.'
 
-      # Always upload an encrypted bundle, even if source checkout or Unity fails.
-      # A hard runner shutdown, cancellation, or inability to install age is not recoverable.
-      - name: Encrypt outputs and private logs (success or failure)
+      # Independent archives: diagnostics first, then APK and AAB.
+      # GitHub may forcibly terminate jobs on cancellation, so always()
+      # is best-effort for manual cancellations or runner loss.
+      - name: Encrypt diagnostics, APK and AAB independently
         if: always()
         id: seal
         shell: bash
@@ -222,37 +224,74 @@ jobs:
           set -euo pipefail
           umask 077
           mkdir -p "$RUNNER_TEMP/simple-private-logs" encrypted
-          printf 'Finalizer started; job status: %s\n' "${{ job.status }}" >> "$RUNNER_TEMP/simple-private-logs/build-status.txt"
-          # Repair any private licensing-client files before packaging, if present.
-          if [ -d "$RUNNER_TEMP/simple-private-logs/licensing-client" ]; then
-            sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/simple-private-logs/licensing-client"
-            chmod -R go-rwx "$RUNNER_TEMP/simple-private-logs/licensing-client"
+          printf 'Finalizer started; build outcome: %s\n' "${{ steps.android_build.outcome }}" >> "$RUNNER_TEMP/simple-private-logs/build-status.txt"
+          if ! command -v age >/dev/null 2>&1; then
+            echo 'Encryption tool unavailable; cannot upload plaintext diagnostics.'
+            exit 1
           fi
-          test -x "$(command -v age)" || { echo 'artifact encryption tool unavailable'; exit 1; }
-          # Capture Unity's persistent Editor.log, if it exists, inside the encrypted bundle.
-          for f in "$HOME/Library/Logs/Unity/Editor.log" "$HOME/.config/unity3d/Editor.log"; do
-            if [ -f "$f" ]; then cp "$f" "$RUNNER_TEMP/simple-private-logs/editor.log"; fi
-          done
-          python3 - <<'PY_TAR' | age -r "$(cat ci/ci/artifact-recipient.txt)" -o "encrypted/android-${{ github.run_id }}.tar.age"
-          import os, sys, tarfile
-          home = os.environ['RUNNER_TEMP']
-          workspace = os.environ['GITHUB_WORKSPACE']
-          logs = os.path.join(home, 'simple-private-logs')
-          artifacts = os.path.join(workspace, 'dist')
-          with tarfile.open(fileobj=sys.stdout.buffer, mode='w|') as tf:
-              tf.add(logs, arcname='private-logs')
-              if os.path.isdir(artifacts):
-                  tf.add(artifacts, arcname='build-outputs')
-          PY_TAR
-          test -s "encrypted/android-${{ github.run_id }}.tar.age" || exit 1
-          echo 'Encrypted diagnostics and available outputs sealed.'
+          # Keep all packaging tool stdout/stderr private. Never show source
+          # paths, output names or Unity/Hub logs in the public Actions job.
+          if ! python3 ci/ci/seal-android.py \
+              --logs "$RUNNER_TEMP/simple-private-logs" \
+              --dist "$GITHUB_WORKSPACE/dist" \
+              --recipient-file ci/ci/artifact-recipient.txt \
+              --out encrypted \
+              --run-id "$GITHUB_RUN_ID" \
+              > "$RUNNER_TEMP/android-seal-private.log" 2>&1; then
+            echo 'Encrypted diagnostics packaging failed; see private runner log.'
+            exit 1
+          fi
+          # The helper writes only fixed true/false flags to GITHUB_OUTPUT.
+          echo 'Available Android files and diagnostics encrypted separately.'
 
-      - name: Upload encrypted package only
-        if: always() && steps.seal.outcome == 'success'
+      - name: Upload private diagnostic archive only
+        id: logs_upload
+        if: always() && steps.seal.outputs.has_logs == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: android-sealed-${{ github.run_id }}
-          path: encrypted/*.tar.age
+          name: android-private-logs-${{ github.run_id }}
+          path: encrypted/android-*-logs.tar.gz.age
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
+
+      - name: Upload encrypted APK only
+        id: apk_upload
+        if: always() && steps.seal.outputs.has_apk == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-sealed-apk-${{ github.run_id }}
+          path: encrypted/android-*-apk.tar.gz.age
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Upload encrypted AAB only
+        id: aab_upload
+        if: always() && steps.seal.outputs.has_aab == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-sealed-aab-${{ github.run_id }}
+          path: encrypted/android-*-aab.tar.gz.age
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Verify both encrypted Android deliverables were uploaded
+        if: always() && steps.android_build.outcome == 'success'
+        shell: bash
+        env:
+          HAS_APK: ${{ steps.seal.outputs.has_apk }}
+          HAS_AAB: ${{ steps.seal.outputs.has_aab }}
+          HAS_LOGS: ${{ steps.seal.outputs.has_logs }}
+          UPLOAD_APK: ${{ steps.apk_upload.outcome }}
+          UPLOAD_AAB: ${{ steps.aab_upload.outcome }}
+          UPLOAD_LOGS: ${{ steps.logs_upload.outcome }}
+        run: |
+          set -euo pipefail
+          if [[ "$HAS_APK" != true || "$HAS_AAB" != true || "$HAS_LOGS" != true ||
+                "$UPLOAD_APK" != success || "$UPLOAD_AAB" != success || "$UPLOAD_LOGS" != success ]]; then
+            echo '::error title=Simple CI outputs::One or more encrypted Android deliverables are absent or upload failed.'
+            exit 1
+          fi
+          echo 'Encrypted APK, AAB and diagnostic artifacts verified.'
