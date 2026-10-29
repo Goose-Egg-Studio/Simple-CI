@@ -17,6 +17,8 @@ STANDARD_ROOT="/Applications/Unity/Hub/Editor"
 # All Editor payloads remain on the same runner disk, and are ephemeral.
 WRITABLE_ROOT="$RUNNER_TEMP/simple-unity-editors"
 CLI_HOME="$RUNNER_TEMP/simple-unity-cli"
+# Keep CLI runtime data in the same per-job directory as its executable.
+export UNITY_CLI_HOME="$CLI_HOME"
 CLI="$CLI_HOME/bin/unity"
 EDITOR="$STANDARD_ROOT/$VERSION/Unity.app/Contents/MacOS/Unity"
 ANDROID="$STANDARD_ROOT/$VERSION/Unity.app/Contents/PlaybackEngines/AndroidPlayer"
