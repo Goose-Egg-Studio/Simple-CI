@@ -25,7 +25,7 @@ SAFE_SCRIPT_PHASES = {
 
 EDITOR_PHASES = (
     ("image", "Unity runtime preparation", (b"Pulling from unityci/editor", b"running docker process for linux", b"installing Unity Editor", b"Installing Unity Editor")),
-    ("license", "Unity license activation requested", (b"Requesting activation (professional license)", b"Requesting activation (personal license)", b"Requesting activation\n")),
+    ("license", "Unity license activation requested", (b"Requesting activation (professional license)", b"Requesting activation (personal license)", b"Requesting activation")),
     ("license_ok", "Unity license activated successfully", (b"Activation complete.",)),
     ("project", "Unity project build entered", (b"#    Building project", b"#    Building project     #")),
     ("packages", "Unity packages resolved", (b"[Package Manager] Done resolving packages",)),
