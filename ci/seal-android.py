@@ -69,7 +69,7 @@ def select_output(dist, extension):
     return files[0], "found"
 
 
-def seal(source, arcname, destination, recipient, compression=1):
+def seal(source, arcname, destination, recipient, compression=1, diagnostics=None):
     """Encrypt a streaming tar.gz directly; never write plaintext tar to disk."""
     temp = destination.with_suffix(destination.suffix + ".partial")
     try:
@@ -108,6 +108,12 @@ def seal(source, arcname, destination, recipient, compression=1):
         # Caller redirects stderr to a private file; never expose this on
         # public Actions stdout because exceptions may contain private paths.
         print("seal-error={} {}".format(type(exc).__name__, str(exc)), file=sys.stderr)
+        if diagnostics is not None:
+            try:
+                with diagnostics.open("a", encoding="utf-8") as f:
+                    f.write("seal-error={} {}\n".format(type(exc).__name__, str(exc)))
+            except OSError:
+                pass
         temp.unlink(missing_ok=True)
         return False
 
@@ -150,24 +156,25 @@ def main():
     logs_target = out / (prefix + "-logs.tar.gz.age")
     apk_target = out / (prefix + "-apk.tar.gz.age")
     aab_target = out / (prefix + "-aab.tar.gz.age")
+    seal_errors = log_dir / "artifact-sealing-errors.txt"
     # Encrypt diagnostics first so disk pressure during large APK/AAB
     # encryption cannot prevent collecting the investigation material.
-    has_logs = seal(log_dir, "private-logs", logs_target, recipient, compression=6)
+    has_logs = seal(log_dir, "private-logs", logs_target, recipient, compression=6, diagnostics=seal_errors)
     has_apk = bool(apk) and seal(
-        apk, "build-outputs/" + apk.name, apk_target, recipient
+        apk, "build-outputs/" + apk.name, apk_target, recipient, diagnostics=seal_errors
     )
     has_aab = bool(aab) and seal(
-        aab, "build-outputs/" + aab.name, aab_target, recipient
+        aab, "build-outputs/" + aab.name, aab_target, recipient, diagnostics=seal_errors
     )
 
     with summary.open("a", encoding="utf-8") as f:
         f.write("apk_sealed={}\naab_sealed={}\nlogs_sealed={}\n".format(
             has_apk, has_aab, has_logs
         ))
-    # Update the encrypted logs with final packaging results; never upload
-    # the unencrypted status file. Failure here leaves the original log
-    # archive in place as a fallback.
-    if has_logs:
+    # Only rebuild the logs archive on incomplete output to preserve the
+    # failure reason. Success builds avoid a second costly log compression.
+    # A reseal failure leaves the original diagnostic archive intact.
+    if has_logs and (not has_apk or not has_aab):
         updated_target = out / (prefix + "-logs-updated.tar.gz.age")
         if seal(log_dir, "private-logs", updated_target, recipient, compression=6):
             updated_target.replace(logs_target)
