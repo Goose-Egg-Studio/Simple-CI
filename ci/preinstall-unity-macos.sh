@@ -16,10 +16,12 @@ STANDARD_ROOT="/Applications/Unity/Hub/Editor"
 # Do not ask a headless installer to write directly under /Applications.
 # All Editor payloads remain on the same runner disk, and are ephemeral.
 WRITABLE_ROOT="$RUNNER_TEMP/simple-unity-editors"
+EDITOR_DIR="$WRITABLE_ROOT/$VERSION"
 CLI_HOME="$RUNNER_TEMP/simple-unity-cli"
 # Keep CLI runtime data in the same per-job directory as its executable.
 export UNITY_CLI_HOME="$CLI_HOME"
 CLI="$CLI_HOME/bin/unity"
+LOCAL_EDITOR="$EDITOR_DIR/Unity.app/Contents/MacOS/Unity"
 EDITOR="$STANDARD_ROOT/$VERSION/Unity.app/Contents/MacOS/Unity"
 ANDROID="$STANDARD_ROOT/$VERSION/Unity.app/Contents/PlaybackEngines/AndroidPlayer"
 
@@ -47,60 +49,20 @@ if [[ "$CLI_VERSION" =~ ^1\.0\.0-beta\.([0-9]+)$ ]] && (( BASH_REMATCH[1] < 14 )
 fi
 printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_bootstrap_done'
 
-printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_path_start'
-# The CLI and Hub share the selected install path in user configuration.
-# Target must exist and be writable BEFORE calling install-path --set.
-touch "$WRITABLE_ROOT/.simple-ci-write-check"
-rm -f "$WRITABLE_ROOT/.simple-ci-write-check"
-if "$CLI" install-path --set "$WRITABLE_ROOT" \
-    > "$SIMPLE_CI_LOG_DIR/unity-cli-install-path.log" 2>&1; then
-  :
-elif "$CLI" editors install-path --set "$WRITABLE_ROOT" \
-    >> "$SIMPLE_CI_LOG_DIR/unity-cli-install-path.log" 2>&1; then
-  :
-else
-  echo 'Unity CLI could not set the writable Editor installation directory; see encrypted logs.' >&2
-  exit 43
-fi
-"$CLI" install-path --get > "$SIMPLE_CI_LOG_DIR/unity-cli-current-path.log" 2>&1 || {
-  echo 'Unity CLI failed to read back the configured Editor installation directory.' >&2
-  exit 44
-}
-grep -Fq -- "$WRITABLE_ROOT" "$SIMPLE_CI_LOG_DIR/unity-cli-current-path.log" || {
-  echo 'Unity CLI did not retain the writable Editor installation directory.' >&2
-  exit 45
-}
-
-# GameCI checks a hardcoded /Applications/Unity/Hub/Editor/... path.
-# Make that standard path a symlink to the runner-owned install root.
-# Do NOT chmod /Applications, remove existing installs, or follow preexisting
-# unexpected symlinks. The hosted runner is expected to start fresh.
-sudo -n mkdir -p "/Applications/Unity/Hub"
-if [[ -L "$STANDARD_ROOT" ]]; then
-  [[ "$(readlink "$STANDARD_ROOT")" == "$WRITABLE_ROOT" ]] || {
-    echo 'Unexpected existing Unity Editor symlink at GameCI standard path.' >&2
-    exit 46
-  }
-elif [[ -e "$STANDARD_ROOT" ]]; then
-  # A fresh runner can have an empty Editor directory. Never remove a
-  # directory containing installations or other user data.
-  sudo -n rmdir "$STANDARD_ROOT" || {
-    echo 'Existing nonempty Unity Editor directory cannot be replaced safely.' >&2
-    exit 47
-  }
-  sudo -n ln -s "$WRITABLE_ROOT" "$STANDARD_ROOT"
-else
-  sudo -n ln -s "$WRITABLE_ROOT" "$STANDARD_ROOT"
-fi
-test -w "$STANDARD_ROOT" || {
-  echo 'Editor standard path does not resolve to a writable directory.' >&2
-  exit 48
-}
-printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_path_done'
-
+# Unity CLI 1.0.0-beta.14+ supports self-contained installs using
+# --download-directory. Do not write global Hub install-path configuration.
+# Do not modify /Applications until the Editor and modules are verified.
+# In particular, avoid install-path --set/--get and replacing the entire
+# /Applications/Unity/Hub/Editor tree.
 # Keep private copies of the options of the CLI actually installed today.
 "$CLI" install --help > "$SIMPLE_CI_LOG_DIR/unity-cli-install-help.txt" 2>&1 || true
 "$CLI" install-modules --help > "$SIMPLE_CI_LOG_DIR/unity-cli-modules-help.txt" 2>&1 || true
+if ! grep -Fq -- '--download-directory' "$SIMPLE_CI_LOG_DIR/unity-cli-install-help.txt" ||
+   ! grep -Fq -- '--download-directory' "$SIMPLE_CI_LOG_DIR/unity-cli-modules-help.txt"; then
+  printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_download_directory_unsupported'
+  echo 'Installed Unity CLI lacks the documented self-contained install flag.' >&2
+  exit 49
+fi
 
 run_cli_stage() {
   local stage="$1"
@@ -129,35 +91,75 @@ run_cli_stage() {
   fi
 }
 
+# A pre-created parent is writable, but the Editor payload directory is
+# created by the self-contained installer itself.
 printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_editor_start'
 run_cli_stage editor install "$VERSION" \
   --changeset "$CHANGESET" --architecture x86_64 \
+  --download-directory "$EDITOR_DIR" \
   --yes --accept-eula
 printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_editor_done'
-
-test -x "$EDITOR" || {
+test -x "$LOCAL_EDITOR" || {
   printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_editor_path_invalid'
-  echo 'Unity Editor binary not found at the GameCI expected path.' >&2
+  echo 'Editor binary missing from self-contained download directory.' >&2
   exit 32
 }
 
 printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_modules_start'
 run_cli_stage modules install-modules \
-  -e "$VERSION" -m android --child-modules --accept-eula
+  --download-directory "$EDITOR_DIR" \
+  --module android --child-modules --accept-eula
 printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_modules_done'
 
-# Fail closed: missing Android components must never trigger the GameCI build.
-test -d "$ANDROID" || { echo 'Android Build Support missing'; exit 33; }
-test -d "$ANDROID/SDK" || { echo 'Unity-bundled Android SDK missing'; exit 34; }
-test -d "$ANDROID/NDK" || { echo 'Unity-bundled Android NDK missing'; exit 35; }
-test -d "$ANDROID/OpenJDK" || { echo 'Unity-bundled Android OpenJDK missing'; exit 36; }
+LOCAL_ANDROID="$EDITOR_DIR/Unity.app/Contents/PlaybackEngines/AndroidPlayer"
+test -d "$LOCAL_ANDROID" || { echo 'Android Build Support missing'; exit 33; }
+test -d "$LOCAL_ANDROID/SDK" || { echo 'Unity-bundled Android SDK missing'; exit 34; }
+test -d "$LOCAL_ANDROID/NDK" || { echo 'Unity-bundled Android NDK missing'; exit 35; }
+test -d "$LOCAL_ANDROID/OpenJDK" || { echo 'Unity-bundled Android OpenJDK missing'; exit 36; }
+
+# GameCI v0.1.48 requires the legacy /Applications path. Link ONLY this
+# pinned version; never replace/remove the root or unrelated installations.
+# All actual Editor files stay in the runner-owned self-contained directory.
+printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_path_start'
+sudo -n mkdir -p "$STANDARD_ROOT"
+STANDARD_VERSION="$STANDARD_ROOT/$VERSION"
+if [[ -L "$STANDARD_VERSION" ]]; then
+  if [[ "$(readlink "$STANDARD_VERSION")" != "$EDITOR_DIR" ]]; then
+    printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_path_failure'
+    echo 'Unrecognized existing GameCI Editor symlink; refusing replacement.' >&2
+    exit 46
+  fi
+elif [[ -e "$STANDARD_VERSION" ]]; then
+  printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_path_failure'
+  echo 'Existing real Editor version directory; refusing to overwrite.' >&2
+  exit 47
+else
+  if ! sudo -n ln -s "$EDITOR_DIR" "$STANDARD_VERSION"; then
+    printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_path_failure'
+    echo 'Unable to create the GameCI compatibility version symlink.' >&2
+    exit 48
+  fi
+fi
+test -x "$EDITOR" || {
+  printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_path_failure'
+  echo 'GameCI cannot resolve the Editor through its required standard path.' >&2
+  exit 50
+}
+test -d "$ANDROID/SDK" && test -d "$ANDROID/NDK" &&
+  test -d "$ANDROID/OpenJDK" || {
+    printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_path_failure'
+    echo 'GameCI cannot resolve Android dependencies through its standard path.' >&2
+    exit 51
+  }
+printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_path_done'
 
 {
   printf 'Installer=official standalone Unity CLI beta channel\n'
   printf 'Editor version=%s\n' "$VERSION"
   printf 'Changeset=%s\n' "$CHANGESET"
   printf 'CLI version=%s\n' "$CLI_VERSION"
-  printf 'Path validation=passed\n'
+  printf 'Self-contained install=verified\n'
+  printf 'GameCI symlink=verified\n'
   for component in "$ANDROID/SDK" "$ANDROID/NDK" "$ANDROID/OpenJDK"; do
     if [[ -d "$component" ]]; then printf 'Android component present\n'; fi
   done
