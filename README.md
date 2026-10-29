@@ -139,3 +139,10 @@ Android 工作流 `.github/workflows/android.yml` 使用 **`macos-26-intel`**（
 预安装阶段曾在输出 `unity_cli_editor_start` 后立即失败，表明错误在独立 CLI 的安装命令内部，而非 Unity Hub 长时间无响应。Unity CLI 安装器对非交互环境的提权会在下载前检测；如果出现 `ELEVATION_FAILED`、`ELEVATION_CANCELLED` 或明确的权限错误，CI 现在会尝试一次 `sudo -n -H` 非交互重试；不是权限问题时**不会**盲目重试或切回旧 Unity Hub。
 
 目前保留 Unity 2022.3.62f3、changeset `96770f904ca7` 和 Android 子模块参数，新增独立的私有安装命令日志 `unity-cli-install-detail.log`、运行时参数帮助 `unity-cli-install-help.txt`、可选的 `unity-cli-root-retry.log`，最终都由原有 age 加密诊断包保护。Actions 只发布固定的错误类别（参数、发行版、授权提权或其他）。**这些改动是针对诊断和提权失败场景的修复，尚未经过成功安装及完整构建验证。**
+
+
+### 修复：拆分 Unity Editor 与 Android 模块安装（2026-10-29）
+
+独立 Unity CLI 的一体化安装命令多次在 T+0m 返回 `INVALID_COMMAND_ARGS`，并不能从公开日志推断究竟是哪项参数有冲突。现在先执行带固定 changeset 的**Editor 本体安装**，验证标准路径中的 Unity 二进制，再单独执行 `unity install-modules --editor-version 2022.3.62f3 --module android --child-modules --accept-eula`。各阶段用固定白名单提示输出（`Standalone Unity Editor core install ...`、`Android SDK NDK OpenJDK module install ...`），原始日志分存 `unity-cli-editor-detail.log` 和 `unity-cli-modules-detail.log`，并由既有 age 诊断加密机制保护。
+
+**注意**：Unity CLI 具体的 `INVALID_COMMAND_ARGS` 原因仍需要私有安装日志才能最终确定；拆分命令使下一次失败可以定位到 Editor 或 Android 模块，并非宣称已经解决该错误。安装器输出会经过 safe-progress 的私有日志管道，以防长时间下载安装被看作没有日志活动。必须通过真实 macOS Runner 才能验证成功。
