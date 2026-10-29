@@ -50,7 +50,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/simple-private-logs"
-          (brew list --versions age >/dev/null 2>&1 || brew install age) > "$RUNNER_TEMP/simple-private-logs/crypto-install.log" 2>&1 || { echo 'age crypto installation failed; see encrypted diagnostics'; exit 1; }
+          {
+            brew list --versions age >/dev/null 2>&1 || brew install age
+            # GameCI macOS helper script uses modern Bash features (macOS
+            # ships an old Bash 3.2 by default).
+            brew list --versions bash >/dev/null 2>&1 || brew install bash
+          } > "$RUNNER_TEMP/simple-private-logs/crypto-install.log" 2>&1 || { echo 'macOS CLI prerequisites installation failed; see encrypted diagnostics'; exit 1; }
+          echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
           command -v age >/dev/null || { echo 'age binary missing'; exit 1; }
           echo 'Encryption tool ready.'
 
