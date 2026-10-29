@@ -110,6 +110,14 @@ def run():
                 time.sleep(2)
         code = proc.wait()
 
+    # Unity 2022.3 can return Success even when Addressables content was
+    # omitted. Never publish such a Player as a successful Android build.
+    if "Addressables" in detected_failures:
+        print("::error title=Simple CI Addressables::Addressables content build "
+              "failed. APK/AAB are incomplete even if Unity reports success. "
+              "Inspect age-encrypted diagnostics.", flush=True)
+        return 86
+
     if code == 0:
         notice("Build command completed successfully")
     else:
