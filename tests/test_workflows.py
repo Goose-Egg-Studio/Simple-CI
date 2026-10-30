@@ -121,6 +121,21 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertNotIn("brew install", probe)
         self.assertIn("PlaybackEngines/AndroidPlayer/SDK", probe)
 
+    def test_native_build_uses_multi_signal_watchdog_and_private_stacks(self):
+        android = self.read("android.yml")
+        self.assertIn("--max-no-output 1800", android)
+        self.assertIn("--diagnose-after 600", android)
+        self.assertIn("--max-no-output 2700", android)  # independent CLI install
+        monitor = (ROOT / "ci" / "safe-progress.py").read_text(encoding="utf-8")
+        self.assertIn("unity_health.unity_log_stamps()", monitor)
+        self.assertIn("unity_health.cpu_delta(", monitor)
+        self.assertIn("private_unity_snapshot(\"console-stall\")", monitor)
+        self.assertIn("private_unity_snapshot(\"watchdog\")", monitor)
+        snapshot = (ROOT / "ci" / "capture-unity-hang.py").read_text(encoding="utf-8")
+        self.assertIn("sample", snapshot)
+        self.assertIn("simple-private-logs", snapshot)
+        self.assertNotIn("print(raw.stdout", snapshot)
+
     def test_android_outputs_are_separately_encrypted(self):
         text = self.read("android.yml")
         self.assertIn("android-apk-sealed-", text)
