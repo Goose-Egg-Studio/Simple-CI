@@ -173,7 +173,16 @@ jobs:
             export UNITY_LICENSE
           fi
           unset UNITY_LICENSE_BASE64
-          bash "$RUNNER_TEMP/secure-ci/scripts/cli-build-ios.sh" > "$RUNNER_TEMP/simple-private-logs/unity-build.log" 2>&1 || { echo 'build failed; download encrypted diagnostics'; exit 1; }
+          if ! python3 -u ci/ci/safe-progress.py \
+              --platform ios \
+              --log "$RUNNER_TEMP/simple-private-logs/unity-build.log" \
+              --health-log "$RUNNER_TEMP/simple-private-logs/health-ios.jsonl" \
+              --heartbeat 60 --max-no-phase 7200 --max-no-output 2700 \
+              --min-free-gib 1.5 -- \
+              bash "$RUNNER_TEMP/secure-ci/scripts/cli-build-ios.sh"; then
+            echo 'iOS build failed; encrypted diagnostics available.'
+            exit 1
+          fi
 
       # Always upload an encrypted bundle, even if source checkout or Unity fails.
       # A hard runner shutdown, cancellation, or inability to install age is not recoverable.
