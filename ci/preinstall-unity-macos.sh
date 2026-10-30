@@ -96,9 +96,13 @@ run_cli_stage() {
 # A pre-created parent is writable, but the Editor payload directory is
 # created by the self-contained installer itself.
 printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_editor_start'
+# Unity's documented portable CI installation installs the Editor AND its
+# platform modules in one invocation. Separate install-modules calls on this
+# runner have returned success twice while leaving AndroidPlayer absent.
 run_cli_stage editor install "$VERSION" \
   --changeset "$CHANGESET" --architecture x86_64 \
   --download-directory "$WRITABLE_ROOT" \
+  --module android --child-modules \
   --yes --accept-eula
 printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_editor_done'
 
@@ -132,12 +136,8 @@ test -x "$LOCAL_EDITOR" || {
   exit 32
 }
 
-printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_modules_start'
-run_cli_stage modules install-modules \
-  --editor-version "$VERSION" --download-directory "$WRITABLE_ROOT" \
-  --module android --child-modules --yes --accept-eula
-printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_modules_done'
-
+# Android was requested by the same Editor install command. Check the real
+# payload before attempting any secondary operation.
 LOCAL_ANDROID="$EDITOR_DIR/Unity.app/Contents/PlaybackEngines/AndroidPlayer"
 COMPONENT_REPORT="$SIMPLE_CI_LOG_DIR/unity-android-components.txt"
 
@@ -189,16 +189,19 @@ check_android_components() {
 
 printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_modules_validate_start'
 if ! check_android_components "initial"; then
-  # The CLI returning exit 0 is not proof that the Android child modules
-  # actually landed on disk. Ask for all documented module IDs explicitly.
-  # --reinstall repairs incomplete module trees on a fresh ephemeral runner.
-  printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_modules_repair_start'
-  run_cli_stage modules-repair install-modules \
-    --editor-version "$VERSION" --download-directory "$WRITABLE_ROOT" \
-    --module android --module android-sdk-ndk-tools \
-    --module android-open-jdk --child-modules --reinstall \
-    --yes --accept-eula
-  printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_modules_repair_done'
+  # A wholly missing AndroidPlayer after the all-in-one install is not a
+  # partial/interrupted module download: the former separate install-modules
+  # path returned zero twice with no payload. Stop with evidence instead of
+  # spending another 10+ minutes making the same unsuccessful request.
+  if [[ -d "$LOCAL_ANDROID" ]]; then
+    printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_modules_repair_start'
+    run_cli_stage modules-repair install-modules \
+      --editor-version "$VERSION" --download-directory "$WRITABLE_ROOT" \
+      --module android --child-modules --reinstall --yes --accept-eula
+    printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_modules_repair_done'
+  else
+    printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_android_payload_absent'
+  fi
 fi
 
 if ! check_android_components "final"; then
@@ -206,8 +209,25 @@ if ! check_android_components "final"; then
   # archive. This reveals whether modules were installed in another tree,
   # without dumping unrelated filesystem contents or publishing file paths.
   {
-    find "$EDITOR_DIR" -type d \( -name AndroidPlayer -o -name SDK -o -name NDK -o -name OpenJDK \) -print 2>/dev/null |
-      sed "s|^$EDITOR_DIR/||" | head -n 80
+    printf 'expected-layout: Unity.app/Contents/PlaybackEngines/AndroidPlayer\n'
+    printf 'editor-version=%s\n' "$VERSION"
+    # Restrict inspection to the CLI's own temporary install root. Includes
+    # alternate version directories, should the CLI select one unexpectedly.
+    find "$WRITABLE_ROOT" -maxdepth 10 -type d \
+      \( -name AndroidPlayer -o -name PlaybackEngines -o -name SDK -o -name NDK -o -name OpenJDK \) \
+      -print 2>/dev/null | sed "s|^$WRITABLE_ROOT/||" | head -n 100
+    printf '\neditor-metadata:\n'
+    for metadata in "$EDITOR_DIR/modules.json" "$EDITOR_DIR/metadata.hub.json"; do
+      if [[ -f "$metadata" ]]; then
+        printf 'present\n'
+      else
+        printf 'absent\n'
+      fi
+    done
+    printf '\ncli-summary-of-final-install:\n'
+    # CLI output can include download URLs and installation paths, so keep
+    # the full summary exclusively inside the age-sealed diagnostic archive.
+    tail -n 180 "$SIMPLE_CI_LOG_DIR/unity-cli-editor-detail.log" || true
   } > "$SIMPLE_CI_LOG_DIR/unity-android-module-locations.txt" || true
 
   if [[ ! -d "$LOCAL_ANDROID" ]]; then
@@ -222,7 +242,7 @@ if ! check_android_components "final"; then
   if [[ ! -d "$LOCAL_ANDROID/OpenJDK" ]]; then
     printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_android_openjdk_missing'
   fi
-  echo 'Android modules are not complete after one explicit repair; inspect encrypted component diagnostics.' >&2
+  echo 'Unity Android payload absent or incomplete after documented portable install; inspect encrypted module-layout diagnostics.' >&2
   exit 37
 fi
 printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_modules_validated'
