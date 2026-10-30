@@ -67,6 +67,33 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertIn("SIMPLE_CI_PHASE=unity_cli_android_payload_absent", installer)
         self.assertIn("unity-android-module-locations.txt", installer)
 
+    def test_macos_android_module_path_is_sibling_of_unity_app(self):
+        # Regression for the 2026-10-30 false-negative AndroidPlayer checks.
+        # Unity's macOS Editor binary is inside Unity.app/Contents, but the
+        # Android module is installed alongside the .app bundle.
+        installer = (ROOT / "ci" / "preinstall-unity-macos.sh").read_text(
+            encoding="utf-8"
+        )
+        snapshot = (ROOT / "ci" / "capture-unity-hub.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            'LOCAL_ANDROID="$EDITOR_DIR/PlaybackEngines/AndroidPlayer"',
+            installer,
+        )
+        self.assertIn(
+            'ANDROID="$STANDARD_ROOT/$VERSION/PlaybackEngines/AndroidPlayer"',
+            installer,
+        )
+        self.assertNotIn(
+            "Unity.app/Contents/PlaybackEngines/AndroidPlayer",
+            installer,
+        )
+        self.assertIn(
+            'android_root = editor_root.parent.parent / "PlaybackEngines" / "AndroidPlayer"',
+            snapshot,
+        )
+
     def test_android_outputs_are_separately_encrypted(self):
         text = self.read("android.yml")
         self.assertIn("android-apk-sealed-", text)
