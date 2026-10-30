@@ -77,6 +77,7 @@ def run():
     parser = argparse.ArgumentParser()
     parser.add_argument("--log", required=True)
     parser.add_argument("--health-log", required=True)
+    parser.add_argument("--platform", choices=("android", "ios"), default="android")
     parser.add_argument("--heartbeat", type=int, default=60)
     parser.add_argument("--max-no-phase", type=int, default=7200)
     parser.add_argument("--max-no-output", type=int, default=2700)
@@ -198,7 +199,7 @@ def run():
         except OSError:
             return -1
 
-    notice("Private Android build launched (T+0m)")
+    notice("Private %s build launched (T+0m)" % args.platform.capitalize())
     with path.open("wb", buffering=0) as writer:
         proc = subprocess.Popen(command, stdout=writer, stderr=subprocess.STDOUT, start_new_session=True)
         def on_signal(signum, frame):
