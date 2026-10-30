@@ -139,10 +139,93 @@ run_cli_stage modules install-modules \
 printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_modules_done'
 
 LOCAL_ANDROID="$EDITOR_DIR/Unity.app/Contents/PlaybackEngines/AndroidPlayer"
-test -d "$LOCAL_ANDROID" || { echo 'Android Build Support missing'; exit 33; }
-test -d "$LOCAL_ANDROID/SDK" || { echo 'Unity-bundled Android SDK missing'; exit 34; }
-test -d "$LOCAL_ANDROID/NDK" || { echo 'Unity-bundled Android NDK missing'; exit 35; }
-test -d "$LOCAL_ANDROID/OpenJDK" || { echo 'Unity-bundled Android OpenJDK missing'; exit 36; }
+COMPONENT_REPORT="$SIMPLE_CI_LOG_DIR/unity-android-components.txt"
+
+# Return nonzero on any missing directory. Write only fixed component names,
+# statuses and locally-known metadata booleans to the encrypted report.
+# No project files, licenses or downloaded module contents are exposed.
+check_android_components() {
+  local stage="$1"
+  local missing=0
+  {
+    printf 'validation-stage=%s\n' "$stage"
+    if [[ -d "$LOCAL_ANDROID" ]]; then
+      echo 'AndroidPlayer=present'
+    else
+      echo 'AndroidPlayer=missing'
+      missing=1
+    fi
+    if [[ -d "$LOCAL_ANDROID/SDK" ]]; then
+      echo 'SDK=present'
+    else
+      echo 'SDK=missing'
+      missing=1
+    fi
+    if [[ -d "$LOCAL_ANDROID/NDK" ]]; then
+      echo 'NDK=present'
+    else
+      echo 'NDK=missing'
+      missing=1
+    fi
+    if [[ -d "$LOCAL_ANDROID/OpenJDK" ]]; then
+      echo 'OpenJDK=present'
+    else
+      echo 'OpenJDK=missing'
+      missing=1
+    fi
+    if [[ -f "$EDITOR_DIR/modules.json" ]]; then
+      echo 'CLI-module-manifest=present'
+    else
+      echo 'CLI-module-manifest=missing'
+    fi
+    if [[ -f "$EDITOR_DIR/metadata.hub.json" ]]; then
+      echo 'CLI-editor-metadata=present'
+    else
+      echo 'CLI-editor-metadata=missing'
+    fi
+  } >> "$COMPONENT_REPORT"
+  return "$missing"
+}
+
+printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_modules_validate_start'
+if ! check_android_components "initial"; then
+  # The CLI returning exit 0 is not proof that the Android child modules
+  # actually landed on disk. Ask for all documented module IDs explicitly.
+  # --reinstall repairs incomplete module trees on a fresh ephemeral runner.
+  printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_modules_repair_start'
+  run_cli_stage modules-repair install-modules \
+    --editor-version "$VERSION" --download-directory "$WRITABLE_ROOT" \
+    --module android --module android-sdk-ndk-tools \
+    --module android-open-jdk --child-modules --reinstall \
+    --yes --accept-eula
+  printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_modules_repair_done'
+fi
+
+if ! check_android_components "final"; then
+  # Record the bounded relative layout only in the encrypted diagnostic
+  # archive. This reveals whether modules were installed in another tree,
+  # without dumping unrelated filesystem contents or publishing file paths.
+  {
+    find "$EDITOR_DIR" -type d \( -name AndroidPlayer -o -name SDK -o -name NDK -o -name OpenJDK \) -print 2>/dev/null |
+      sed "s|^$EDITOR_DIR/||" | head -n 80
+  } > "$SIMPLE_CI_LOG_DIR/unity-android-module-locations.txt" || true
+
+  if [[ ! -d "$LOCAL_ANDROID" ]]; then
+    printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_android_player_missing'
+  fi
+  if [[ ! -d "$LOCAL_ANDROID/SDK" ]]; then
+    printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_android_sdk_missing'
+  fi
+  if [[ ! -d "$LOCAL_ANDROID/NDK" ]]; then
+    printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_android_ndk_missing'
+  fi
+  if [[ ! -d "$LOCAL_ANDROID/OpenJDK" ]]; then
+    printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_android_openjdk_missing'
+  fi
+  echo 'Android modules are not complete after one explicit repair; inspect encrypted component diagnostics.' >&2
+  exit 37
+fi
+printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_modules_validated'
 
 # GameCI v0.1.48 requires the legacy /Applications path. Link ONLY this
 # pinned version; never replace/remove the root or unrelated installations.
