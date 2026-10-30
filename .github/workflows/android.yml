@@ -70,6 +70,28 @@ jobs:
 
       # Bootstrap public Unity binaries before loading any decrypted private
       # CI scripts, credentials, or game source onto the runner filesystem.
+      # Install the external GameCI tool before placing decrypted CI code,
+      # application source or any App token on this runner filesystem.
+      - name: Install GameCI CLI privately (pinned installer)
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          ROOT="$RUNNER_TEMP/game-ci-installer"
+          LOG="$RUNNER_TEMP/simple-private-logs/gameci-install.log"
+          mkdir -p "$ROOT/scripts" "$RUNNER_TEMP/simple-private-logs"
+          {
+            curl --fail --silent --show-error --location \
+              "https://raw.githubusercontent.com/game-ci/cli/a9d35fd6cfae06bc130dcd49a48ccb8509197e38/scripts/install.sh" \
+              --output "$ROOT/scripts/install.sh"
+            export GAME_CI_INSTALL="$RUNNER_TEMP/game-ci/bin"
+            bash "$ROOT/scripts/install.sh" "v0.1.48" "$GAME_CI_INSTALL"
+            test -x "$GAME_CI_INSTALL/game-ci"
+            "$GAME_CI_INSTALL/game-ci" --help >/dev/null 2>&1
+          } >"$LOG" 2>&1 || { echo 'GameCI CLI installation failed; see encrypted diagnostics'; exit 1; }
+          echo "$RUNNER_TEMP/game-ci/bin" >> "$GITHUB_PATH"
+          echo 'GameCI CLI installed.'
+
       # Use Unity's standalone CLI, not the Hub's legacy headless downloader.
       # The existing sealed GameCI script will find this installed Editor at
       # the standard path and skip its own Unity Hub Editor install.
@@ -93,28 +115,6 @@ jobs:
             exit 1
           fi
           echo 'Standalone Editor and Android support verified; starting private GameCI build.'
-
-      # Install the external GameCI tool before placing decrypted CI code,
-      # application source or any App token on this runner filesystem.
-      - name: Install GameCI CLI privately (pinned installer)
-        shell: bash
-        run: |
-          set -euo pipefail
-          umask 077
-          ROOT="$RUNNER_TEMP/game-ci-installer"
-          LOG="$RUNNER_TEMP/simple-private-logs/gameci-install.log"
-          mkdir -p "$ROOT/scripts" "$RUNNER_TEMP/simple-private-logs"
-          {
-            curl --fail --silent --show-error --location \
-              "https://raw.githubusercontent.com/game-ci/cli/a9d35fd6cfae06bc130dcd49a48ccb8509197e38/scripts/install.sh" \
-              --output "$ROOT/scripts/install.sh"
-            export GAME_CI_INSTALL="$RUNNER_TEMP/game-ci/bin"
-            bash "$ROOT/scripts/install.sh" "v0.1.48" "$GAME_CI_INSTALL"
-            test -x "$GAME_CI_INSTALL/game-ci"
-            "$GAME_CI_INSTALL/game-ci" --help >/dev/null 2>&1
-          } >"$LOG" 2>&1 || { echo 'GameCI CLI installation failed; see encrypted diagnostics'; exit 1; }
-          echo "$RUNNER_TEMP/game-ci/bin" >> "$GITHUB_PATH"
-          echo 'GameCI CLI installed.'
 
       - name: Unseal CI implementation
         shell: bash
