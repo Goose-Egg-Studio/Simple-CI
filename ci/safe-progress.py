@@ -116,11 +116,14 @@ def run():
             # by waiting indefinitely in proc.wait() after the watchdog fires.
             def force_kill():
                 time.sleep(12)
-                if proc.poll() is None:
-                    try:
-                        os.killpg(proc.pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
+                # The shell parent can exit from SIGTERM while a Unity
+                # grandchild ignores it. Killing only when the shell is still
+                # alive can leave that child running during log sealing.
+                # This process group was created with start_new_session=True.
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
             threading.Thread(target=force_kill, name="simple-force-kill", daemon=True).start()
 
     def mark_phase(label):
