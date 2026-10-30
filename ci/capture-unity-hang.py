@@ -72,6 +72,29 @@ def capture(out_dir, tag, process_group):
         if append_log_tail(source, destination / ("unity-log-%02d.tail" % index), max_tail):
             summary["editor_log_files_copied"] += 1
 
+    # When the last public stage is C# compilation or Asset Import, licensing
+    # and Package Manager might still be the actual blocker. Preserve a short
+    # tail of their well-known logs ONLY inside the age-encrypted archive.
+    auxiliary = (
+        "upm.log", "Unity.Licensing.Client.log",
+        "Unity.Entitlements.Audit.log",
+    )
+    summary["auxiliary_log_files_copied"] = 0
+    folders = [Path.home() / "Library" / "Logs" / "Unity",
+               Path.home() / ".config" / "unity3d" / "Unity"]
+    workspace = os.environ.get("GITHUB_WORKSPACE")
+    if workspace:
+        folders.append(Path(workspace) / "project" / "Logs")
+    for folder in folders:
+        if folder.is_symlink() or not folder.is_dir():
+            continue
+        for name in auxiliary:
+            if append_log_tail(folder / name,
+                               destination / ("aux-log-%02d.tail" %
+                                              summary["auxiliary_log_files_copied"]),
+                               MAX_WORKER_LOG_TAIL):
+                summary["auxiliary_log_files_copied"] += 1
+
     if sys.platform == "darwin" and info["editor_pids"]:
         # A 4-second macOS sample can reveal a licensing wait, import lock,
         # asset worker deadlock or blocked Unity thread. This output may
