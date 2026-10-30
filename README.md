@@ -120,13 +120,15 @@ Android 工作流 `.github/workflows/android.yml` 使用 **`macos-26-intel`**（
 
 ## Android 最新安装路线：自包含 Editor（2026-10-30）
 
+**新一轮实际结果（T+12m）：** 独立 Unity CLI 下载并安装 Editor 核心成功，但脚本在本地可执行文件位置检查中失败。根据 Unity 官方的 [Editor 安装参考](https://github.com/Unity-Technologies/skills/blob/main/skills/unity-cli/references/editors-install.md)，`--download-directory <dir>` 会在 `<dir>` 下**自动创建版本子目录**。之前脚本传入 `<root>/<version>`，而自己只在 `<root>/<version>/Unity.app` 检查，目录多嵌套了一层。现已将 CLI 的 Editor 和 Android 模块操作都改为传入 **`$RUNNER_TEMP/simple-unity-editors` 根目录**；模块操作显式附带 `--editor-version 2022.3.62f3`，安装后仅检查 `<root>/<version>` 和 `<root>/<version>-x86_64` 两种文档支持的路径。目录布局的布尔诊断仅保存在 age 加密的 `unity-cli-editor-layout.txt` 中。当前尚未在真实 Runner 中验证修复后的模块安装和完整 APK/AAB 构建。
+
 在 2026-10-30 的一次新运行中，官方独立 Unity CLI 已完成 bootstrap，但此前使用 `unity install-path --set/--get` 的全局目录配置阶段立即失败，尚未进入 Editor 下载。**目前未拿到这次运行的解密日志，不能确认具体失败于哪个旧目录配置命令。**
 
 Unity CLI 1.0.0-beta.14 已增加 `unity install --download-directory <dir>` 与 `unity install-modules --download-directory <dir>`，可将 Editor 和模块完整安装到一个自包含目录，完全不修改全局 Hub 安装路径。CI 现在使用这条官方路径：
 
 1. 官方 Beta 安装器提供 Unity CLI，检查 CLI 是否支持 `--download-directory`，不支持则立即分类失败。
-2. 用 `unity install 2022.3.62f3 --changeset 96770f904ca7 --architecture x86_64 --download-directory "$RUNNER_TEMP/simple-unity-editors/2022.3.62f3" --yes --accept-eula` 安装 Editor。
-3. 用 `unity install-modules --download-directory "$RUNNER_TEMP/simple-unity-editors/2022.3.62f3" --module android --child-modules --accept-eula` 添加 Android SDK/NDK/OpenJDK；不再依赖 `-e`（Unity 1.0.0-beta.15 更改过其短选项含义）。
+2. 用 `unity install 2022.3.62f3 --changeset 96770f904ca7 --architecture x86_64 --download-directory "$RUNNER_TEMP/simple-unity-editors" --yes --accept-eula` 安装 Editor；CLI 自行创建版本子目录。
+3. 用 `unity install-modules --editor-version 2022.3.62f3 --download-directory "$RUNNER_TEMP/simple-unity-editors" --module android --child-modules --yes --accept-eula` 添加 Android SDK/NDK/OpenJDK；不再依赖 `-e`（Unity 1.0.0-beta.15 更改过其短选项含义）。
 4. **只有上述全部完成并通过本地完整性检查后**，才通过 `sudo -n` 创建 `/Applications/Unity/Hub/Editor/2022.3.62f3` 的**单个版本符号链接**，以便 GameCI v0.1.48 复用现有 Editor；不替换 Editor 根目录、不覆盖其他版本、不更改全局 `install-path`。
 5. 继续原来的 GameCI 私有构建及三份独立 age 加密产物（APK、AAB、日志）。
 
