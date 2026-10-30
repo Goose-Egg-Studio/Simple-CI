@@ -39,6 +39,20 @@ class ProgressTests(unittest.TestCase):
         self.assertNotIn("PRIVATE_TOKEN_SHOULD_NOT_APPEAR", process.stdout)
         self.assertNotIn("PRIVATE_TOKEN_SHOULD_NOT_APPEAR", process.stderr)
 
+    def test_missing_unity_android_payload_has_explicit_failure_category(self):
+        process, private = self.invoke(
+            "android",
+            "import sys; "
+            "print('SIMPLE_CI_PHASE=unity_cli_android_payload_absent', flush=True); "
+            "print('PRIVATE_MODULE_INSTALL_OUTPUT', flush=True); "
+            "sys.exit(37)",
+        )
+        self.assertEqual(process.returncode, 37)
+        self.assertIn("Unity Android payload absent after bundled install", process.stdout)
+        self.assertIn("Build failed (Unity Android components)", process.stdout)
+        self.assertIn("PRIVATE_MODULE_INSTALL_OUTPUT", private)
+        self.assertNotIn("PRIVATE_MODULE_INSTALL_OUTPUT", process.stdout)
+
     def test_ios_silences_raw_errors_but_preserves_exit(self):
         process, private = self.invoke(
             "ios",
