@@ -12,7 +12,7 @@ class WorkflowSecurityTests(unittest.TestCase):
         return (WORKFLOWS / name).read_text(encoding="utf-8")
 
     def test_all_public_actions_have_immutable_sha(self):
-        for filename in ("android.yml", "ios.yml", "ci-audit.yml"):
+        for filename in ("android.yml", "ios.yml", "ci-audit.yml", "macos-gameci-preflight.yml"):
             text = self.read(filename)
             actions = re.findall(r"^\s*uses:\s*(actions/[^\s#]+)", text, re.M)
             self.assertTrue(actions, filename)
@@ -110,6 +110,16 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertIn("test -d \"$ANDROID/SDK\"", installer)
         self.assertIn("test -d \"$ANDROID/NDK\"", installer)
         self.assertIn("test -d \"$ANDROID/OpenJDK\"", installer)
+
+    def test_real_macos_path_probe_is_secretless_and_editor_free(self):
+        probe = self.read("macos-gameci-preflight.yml")
+        self.assertIn("runs-on: macos-26-intel", probe)
+        self.assertIn("ci/prepare-gameci-link-macos.sh", probe)
+        self.assertIn("workflow_dispatch:", probe)
+        self.assertNotIn("secrets.", probe)
+        self.assertNotIn("unity install", probe)
+        self.assertNotIn("brew install", probe)
+        self.assertIn("PlaybackEngines/AndroidPlayer/SDK", probe)
 
     def test_android_outputs_are_separately_encrypted(self):
         text = self.read("android.yml")
