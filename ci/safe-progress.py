@@ -202,7 +202,8 @@ def run():
         except OSError:
             return -1
 
-    notice("Private %s build launched (T+0m)" % args.platform.capitalize())
+    platform_label = "iOS" if args.platform == "ios" else "Android"
+    notice("Private %s build launched (T+0m)" % platform_label)
     with path.open("wb", buffering=0) as writer:
         proc = subprocess.Popen(command, stdout=writer, stderr=subprocess.STDOUT, start_new_session=True)
         def on_signal(signum, frame):
