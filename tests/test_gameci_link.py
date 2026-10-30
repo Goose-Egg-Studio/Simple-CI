@@ -23,7 +23,7 @@ class GameCILinkTests(unittest.TestCase):
         self.logs = base / "logs"
         self.logs.mkdir()
 
-    def run_preflight(self, version=VERSION, target=None):
+    def run_preflight(self, version=VERSION, target=None, expected_old=None):
         env = dict(os.environ)
         env.update({
             "SIMPLE_CI_LOG_DIR": str(self.logs),
@@ -31,6 +31,9 @@ class GameCILinkTests(unittest.TestCase):
             "SIMPLE_CI_LINK_VERSION": version,
             "SIMPLE_CI_LINK_TARGET": str(self.target if target is None else target),
         })
+        env.pop("SIMPLE_CI_LINK_EXPECTED_OLD_TARGET", None)
+        if expected_old is not None:
+            env["SIMPLE_CI_LINK_EXPECTED_OLD_TARGET"] = str(expected_old)
         return subprocess.run(
             ["bash", str(SCRIPT)], env=env, capture_output=True, text=True,
             timeout=8, check=False,
@@ -57,6 +60,20 @@ class GameCILinkTests(unittest.TestCase):
     def test_preflight_is_idempotent(self):
         self.assertEqual(self.run_preflight().returncode, 0)
         self.assertEqual(self.run_preflight().returncode, 0)
+
+    def test_retargets_only_link_owned_by_preflight(self):
+        self.assertEqual(self.run_preflight().returncode, 0)
+        alternative = self.target.with_name(VERSION + "-x86_64")
+        result = self.run_preflight(target=alternative, expected_old=self.target)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(os.readlink(self.standard / VERSION), str(alternative))
+
+    def test_retarget_rejects_incorrect_previous_target(self):
+        self.assertEqual(self.run_preflight().returncode, 0)
+        alternative = self.target.with_name(VERSION + "-x86_64")
+        result = self.run_preflight(target=alternative, expected_old=self.target.parent / "not-ours")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(os.readlink(self.standard / VERSION), str(self.target))
 
     def test_replaces_only_empty_version_directory(self):
         (self.standard / VERSION).mkdir(parents=True)
