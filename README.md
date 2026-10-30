@@ -94,7 +94,21 @@ Android 工作流 `.github/workflows/android.yml` 使用 **`macos-26-intel`**（
 - Android 成功构建将上传 **3 个相互独立的 age 加密压缩 Artifact**：`android-apk-sealed-<run_id>`、`android-aab-sealed-<run_id>`、`android-logs-sealed-<run_id>`。每个 Artifact 只包含一个 `.tar.gz.age`，分别是 `Simple.apk`、`Simple.aab`、`private-logs/`。失败时不会发布不完整 APK/AAB，但仍尽力上传独立的加密诊断包。
 
 
-### 2026-10-30：Android 模块全部缺失 — 安装链路调整
+### 2026-10-30：确认 macOS AndroidPlayer 目录检查错误
+
+最新版 CI 再次显示 Editor + Android 模块一体化安装命令成功，但验证报告 `AndroidPlayer`、SDK、NDK、OpenJDK 全部缺失。经比对 [Unity 2022.3 的 macOS Editor 实际模块加载记录](https://discussions.unity.com/t/unable-to-open-scene-after-installing-new-version-of-unity/919582) 和 [Meta 的 Unity macOS 环境安装文档](https://developers.meta.com/vr/documentation/unity/unity-software-setup/)，发现**根因是公开校验脚本的模块目录错误**：
+
+```text
+Editor:  <install-root>/<version>/Unity.app/Contents/MacOS/Unity
+Android: <install-root>/<version>/PlaybackEngines/AndroidPlayer
+SDK:     <install-root>/<version>/PlaybackEngines/AndroidPlayer/SDK
+NDK:     <install-root>/<version>/PlaybackEngines/AndroidPlayer/NDK
+JDK:     <install-root>/<version>/PlaybackEngines/AndroidPlayer/OpenJDK
+```
+
+之前误将 `PlaybackEngines` 放在 `Unity.app/Contents` 内，导致无论模块安装是否成功均报告缺失，还触发了无效补装。当前已同步修复 `ci/preinstall-unity-macos.sh` 的本地/标准路径两处检查及 `ci/capture-unity-hub.py` 的安装状态快照，并添加静态回归测试。**仍需一次实际 Runner 验证模块确实存在、GameCI 能复用 Editor、以及 APK/AAB 完整性。**
+
+## 2026-10-30：Android 模块全部缺失 — 安装链路调整
 
 2026-10-30 最新 macOS Actions 日志显示：Editor 安装完成，`install-modules` 与一次 `--reinstall` 补装命令都返回成功，但安装后 `AndroidPlayer`、`SDK`、`NDK`、`OpenJDK` 四个目录仍全部缺失。四项全部缺失不能直接推断为下载失败，也可能是独立 CLI 的模块安装位置/状态与预期不符；需以加密诊断中的目录清单确定根因。
 
@@ -106,7 +120,7 @@ unity install 2022.3.62f3 --changeset 96770f904ca7 \
   --module android --child-modules --yes --accept-eula
 ```
 
-安装返回后立即检查真实 `Unity.app/Contents/PlaybackEngines/AndroidPlayer` 以及 SDK、NDK、OpenJDK 的目录。只有 `AndroidPlayer` 存在、但子模块不完整时，才对已有安装尝试**一次** `install-modules --reinstall`。如果四项全部缺失，不再无条件重复上轮失败的模块补装；直接用固定阶段标记 `unity_cli_android_payload_absent` 失败，并将当前 Editor 根目录内的模块路径和私有 CLI 安装摘要保存在 age 加密诊断中。
+安装返回后检查真实 `<version>/PlaybackEngines/AndroidPlayer` 以及其下的 SDK、NDK、OpenJDK 目录。只有 `AndroidPlayer` 存在、但子模块不完整时，才对已有安装尝试**一次** `install-modules --reinstall`。如果四项全部缺失，不再无条件重复上轮失败的模块补装；直接用固定阶段标记 `unity_cli_android_payload_absent` 失败，并将当前 Editor 根目录内的模块路径和私有 CLI 安装摘要保存在 age 加密诊断中。
 
 **目前仍未证明** 该一次性安装在 GitHub 的 macOS Runner 上能够实际生成完整 Android 模块，也没有验证 APK/AAB 构建或音乐资源。下一轮只应把“Unity Android components verified on disk”视为安装成功的门槛，不应该把 CLI 命令退出码 0 当作完整性证明。
 
