@@ -13,6 +13,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import unity_health
+
 SAFE_SCRIPT_PHASES = {
     b"SIMPLE_CI_PHASE=unity_cli_bootstrap_start": "Standalone Unity CLI bootstrap started",
     b"SIMPLE_CI_PHASE=unity_cli_bootstrap_done": "Standalone Unity CLI installed",
@@ -85,6 +87,7 @@ def run():
     parser.add_argument("--heartbeat", type=int, default=60)
     parser.add_argument("--max-no-phase", type=int, default=7200)
     parser.add_argument("--max-no-output", type=int, default=2700)
+    parser.add_argument("--diagnose-after", type=int, default=600)
     parser.add_argument("--min-free-gib", type=float, default=1.5)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
@@ -104,6 +107,11 @@ def run():
     stop = threading.Event()
     write_lock = threading.Lock()
     timeout_reason = []
+    # Editor.log and CPU time reveal work that GameCI may not forward to stdout.
+    # This avoids killing an active Editor just because the wrapper went quiet.
+    previous_cpu_by_pid = None
+    previous_editor_logs = None
+    stall_snapshot_taken = False
 
     def notice(message):
         with write_lock:
@@ -216,7 +224,22 @@ def run():
         signal.signal(signal.SIGTERM, on_signal)
         signal.signal(signal.SIGINT, on_signal)
 
+        def private_unity_snapshot(tag):
+            # No raw process details, source paths, licensing text or thread
+            # stacks may enter the public Actions console.
+            command = [sys.executable, str(Path(__file__).with_name("capture-unity-hang.py")),
+                       "--dir", str(path.parent), "--pgid", str(proc.pid), "--tag", tag]
+            safe_env = {k: os.environ[k] for k in
+                        ("PATH", "HOME", "RUNNER_TEMP", "TMPDIR")
+                        if k in os.environ}
+            try:
+                subprocess.run(command, env=safe_env, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, timeout=20, check=False)
+            except (OSError, subprocess.SubprocessError):
+                pass
+
         def heartbeat():
+            nonlocal previous_cpu_by_pid, previous_editor_logs, stall_snapshot_taken
             previous_size = 0
             previous_free_gib = None
             previous_hub_bytes = None
@@ -232,6 +255,13 @@ def run():
                     state["log_time"] = now
                 previous_size = size
                 editor_count, hub_count, gameci_count, cli_count, ambiguous_count = process_counts()
+                cpu_report = unity_health.processes_for_group(proc.pid)
+                cpu_by_pid = cpu_report["cpu_by_pid"]
+                used_cpu_seconds = unity_health.cpu_delta(previous_cpu_by_pid, cpu_by_pid)
+                previous_cpu_by_pid = cpu_by_pid
+                editor_log_stamps = unity_health.unity_log_stamps()
+                editor_log_growth = unity_health.log_changed(previous_editor_logs, editor_log_stamps)
+                previous_editor_logs = editor_log_stamps
                 # The self-contained installer never launches Unity Hub.
                 # Scanning the old Hub temp tree can be expensive and may
                 # obstruct heartbeat delivery. Skip it when Hub is absent.
@@ -246,7 +276,8 @@ def run():
                              if previous_free_gib is not None and free_gib >= 0 else 0.0)
                 previous_free_gib = free_gib if free_gib >= 0 else previous_free_gib
                 disk_activity = disk_drop >= 0.05
-                if active or hub_growth >= 1024 * 1024 or disk_activity:
+                cpu_activity = used_cpu_seconds is not None and used_cpu_seconds >= 1.0
+                if active or hub_growth >= 1024 * 1024 or disk_activity or cpu_activity or editor_log_growth:
                     state["progress_time"] = now
                 info = {
                     "time_utc": datetime.now(timezone.utc).isoformat(),
@@ -265,6 +296,13 @@ def run():
                     "cli_named_processes": cli_count,
                     "ambiguous_unity_named_processes": ambiguous_count,
                     "free_gib": round(free_gib, 2),
+                    "unity_cpu_delta_seconds": (round(used_cpu_seconds, 2)
+                                                 if used_cpu_seconds is not None else None),
+                    "unity_editor_log_changed": editor_log_growth,
+                    "unity_editor_log_files": len(editor_log_stamps),
+                    "unity_editor_log_bytes": sum(stamp[0] for stamp in editor_log_stamps.values()),
+                    "tracked_build_processes": cpu_report["process_count"],
+                    "tracked_asset_workers": cpu_report["worker_count"],
                 }
                 with health_path.open("a", encoding="utf-8") as health:
                     health.write(json.dumps(info, ensure_ascii=True) + "\n")
@@ -273,10 +311,23 @@ def run():
                     return "seen" if count > 0 else "not-seen" if count == 0 else "unknown"
                 editor_presence = ("unknown" if editor_count == 0 and ambiguous_count > 0
                                    else presence(editor_count))
-                notice("Heartbeat T+%dm; log=%s; installer-io=%s; editor=%s; cli=%s; hub=%s; disk=%s" % (
+                cpu_label = ("unknown" if used_cpu_seconds is None else
+                             "active" if cpu_activity else "quiet")
+                editor_log_label = ("missing" if not editor_log_stamps else
+                                    "active" if editor_log_growth else "quiet")
+                notice("Heartbeat T+%dm; log=%s; unity-cpu=%s; editor-log=%s; editor=%s; cli=%s; hub=%s; disk=%s" % (
                     int((now - start) / 60), "growing" if active else "quiet",
-                    "active" if hub_growth >= 1024 * 1024 or disk_activity else "quiet",
-                    editor_presence, presence(cli_count), presence(hub_count), disk))
+                    cpu_label, editor_log_label, editor_presence,
+                    presence(cli_count), presence(hub_count), disk))
+                # Capture Unity thread stacks after prolonged console silence.
+                # One bounded snapshot per build avoids expensive samples.
+                if (args.diagnose_after > 0 and not stall_snapshot_taken and
+                        now - state["log_time"] >= args.diagnose_after and
+                        editor_count > 0 and proc.poll() is None):
+                    stall_snapshot_taken = True
+                    notice("Unity console silent for %dm; saving encrypted-only Editor diagnostic snapshot" %
+                           (int((now - state["log_time"]) / 60)))
+                    private_unity_snapshot("console-stall")
                 # A heartbeat counts only after it was successfully emitted.
                 # The reader thread watches this even if this thread is alive
                 # but stuck in disk_usage, ps or a log I/O call.
@@ -291,6 +342,8 @@ def run():
                 if reason and proc.poll() is None:
                     timeout_reason.append(reason)
                     notice("Watchdog stopping build: " + reason + "; sealed diagnostics will be retained")
+                    if editor_count > 0:
+                        private_unity_snapshot("watchdog")
                     terminate_group(proc)
                     return
 
