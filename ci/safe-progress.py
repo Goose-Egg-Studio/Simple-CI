@@ -145,16 +145,26 @@ def run():
     def process_counts():
         try:
             result = subprocess.run(["ps", "-axo", "comm="], capture_output=True, timeout=5, check=True)
-            names = [os.path.basename(x.decode("utf-8", "replace")).lower() for x in result.stdout.splitlines()]
-            # "Unity Hub" and its helpers are NOT the Unity Editor.
-            # Counting every name containing "unity" previously claimed that
-            # Unity Editor was alive when the installer alone was running.
-            editor = sum(n == "unity" for n in names)
-            hub = sum(n.startswith("unity hub") or n.startswith("unityhub") for n in names)
-            gameci = sum("game-ci" in n or "gameci" in n for n in names)
-            return editor, hub, gameci
+            editor = hub = gameci = cli = ambiguous = 0
+            for item in result.stdout.splitlines():
+                full = item.decode("utf-8", "replace").strip().lower()
+                name = os.path.basename(full)
+                # The standalone Unity CLI executable is ALSO named "unity".
+                # Never claim the Editor is running based on basename alone.
+                if name == "unity":
+                    if "/unity.app/contents/macos/unity" in full:
+                        editor += 1
+                    elif "/simple-unity-cli/bin/unity" in full:
+                        cli += 1
+                    else:
+                        ambiguous += 1
+                if name.startswith("unity hub") or name.startswith("unityhub"):
+                    hub += 1
+                if "game-ci" in name or "gameci" in name:
+                    gameci += 1
+            return editor, hub, gameci, cli, ambiguous
         except (OSError, subprocess.SubprocessError):
-            return -1, -1, -1
+            return -1, -1, -1, -1, -1
 
     def hub_temp_bytes():
         # Unity Hub downloads to the macOS temporary directory by default.
@@ -212,7 +222,11 @@ def run():
                 if active:
                     state["log_time"] = now
                 previous_size = size
-                hub_bytes = hub_temp_bytes()
+                editor_count, hub_count, gameci_count, cli_count, ambiguous_count = process_counts()
+                # The self-contained installer never launches Unity Hub.
+                # Scanning the old Hub temp tree can be expensive and may
+                # obstruct heartbeat delivery. Skip it when Hub is absent.
+                hub_bytes = hub_temp_bytes() if hub_count > 0 else 0
                 hub_growth = (max(0, hub_bytes - previous_hub_bytes)
                               if hub_bytes >= 0 and previous_hub_bytes is not None and previous_hub_bytes >= 0
                               else 0)
@@ -225,7 +239,6 @@ def run():
                 disk_activity = disk_drop >= 0.05
                 if active or hub_growth >= 1024 * 1024 or disk_activity:
                     state["progress_time"] = now
-                editor_count, hub_count, gameci_count = process_counts()
                 info = {
                     "time_utc": datetime.now(timezone.utc).isoformat(),
                     "elapsed_seconds": int(now - start),
@@ -240,6 +253,8 @@ def run():
                     "editor_named_processes": editor_count,
                     "hub_named_processes": hub_count,
                     "gameci_named_processes": gameci_count,
+                    "cli_named_processes": cli_count,
+                    "ambiguous_unity_named_processes": ambiguous_count,
                     "free_gib": round(free_gib, 2),
                 }
                 with health_path.open("a", encoding="utf-8") as health:
@@ -247,10 +262,12 @@ def run():
                 disk = "low" if 0 <= free_gib < args.min_free_gib else "unknown" if free_gib < 0 else "ok"
                 def presence(count):
                     return "seen" if count > 0 else "not-seen" if count == 0 else "unknown"
-                notice("Heartbeat T+%dm; log=%s; installer-io=%s; editor=%s; hub=%s; disk=%s" % (
+                editor_presence = ("unknown" if editor_count == 0 and ambiguous_count > 0
+                                   else presence(editor_count))
+                notice("Heartbeat T+%dm; log=%s; installer-io=%s; editor=%s; cli=%s; hub=%s; disk=%s" % (
                     int((now - start) / 60), "growing" if active else "quiet",
                     "active" if hub_growth >= 1024 * 1024 or disk_activity else "quiet",
-                    presence(editor_count), presence(hub_count), disk))
+                    editor_presence, presence(cli_count), presence(hub_count), disk))
                 reason = None
                 if 0 <= free_gib < args.min_free_gib:
                     reason = "low disk space"
@@ -285,6 +302,12 @@ def run():
                     if pending:
                         report(pending)
                     break
+                # A failed health thread must never leave the private
+                # installer silently running until the 180-minute job cap.
+                if not watcher.is_alive() and not timeout_reason:
+                    timeout_reason.append("health monitor stopped unexpectedly")
+                    notice("Watchdog stopping build: health monitor stopped unexpectedly; sealed diagnostics will be retained")
+                    terminate_group(proc)
                 time.sleep(0.3)
         code = proc.wait()
         stop.set()
