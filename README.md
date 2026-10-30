@@ -94,7 +94,23 @@ Android 工作流 `.github/workflows/android.yml` 使用 **`macos-26-intel`**（
 - Android 成功构建将上传 **3 个相互独立的 age 加密压缩 Artifact**：`android-apk-sealed-<run_id>`、`android-aab-sealed-<run_id>`、`android-logs-sealed-<run_id>`。每个 Artifact 只包含一个 `.tar.gz.age`，分别是 `Simple.apk`、`Simple.aab`、`private-logs/`。失败时不会发布不完整 APK/AAB，但仍尽力上传独立的加密诊断包。
 
 
-### 2026-10-30：Android 模块全部验证通过，GameCI 兼容路径前置校验
+### 2026-10-31：Android 完整构建进入脚本编译后长期沉默的诊断
+
+GitHub Actions [Android Run #32](https://github.com/Goose-Egg-Studio/Simple-CI/actions/runs/41063387181) 已在 **2026-10-30 13:33 UTC** 成功完成 Unity Editor、Android SDK/NDK/OpenJDK 安装及 GameCI 兼容路径校验，随后完成解密、私有源码检出和版本检查。**构建阶段本身**在 13:37:51 UTC 启动；公开日志最后依次识别到许可证激活请求、Package Manager 解析完成、Asset Import 开始、C# 脚本编译请求（13:38:46 UTC），之后没有新的被识别构建阶段。Unity Editor 进程一直存在，但 Watchdog 在 14:32:05 UTC 报告连续 45 分钟未观察到 stdout/大块磁盘写入并终止构建。最终诊断产物 `android-logs-sealed-41063387181` **已成功加密上传**，不能把这次失败归结于安装器。
+
+Unity 2022.3 的 [batchmode 官方说明](https://docs.unity.cn/cn/2022.3/Manual/EditorCommandLineArguments.html) 特别指出：命令行只输出精简日志，完整日志仍在 Editor 日志文件。此前 `safe-progress.py` **没有监控 Editor.log，也没有检查 Unity/AssetImportWorker 实际消耗的 CPU 时间**，因此“GameCI stdout 停止输出”并不能证明 Unity 卡死；也不应直接断定是许可证或编译错误。
+
+本次针对公开监控做集中修复：
+
+- `ci/unity_health.py` 采样 Unity Editor、AssetImportWorker 等进程的累计 CPU 时间和全局/项目 Editor.log 的大小与修改时间。真实 CPU 消耗或日志增长会刷新 Watchdog 的活动时间；不再仅依赖 GameCI 控制台转发。
+- Heartbeat 额外显示 **`unity-cpu=active/quiet/unknown`** 和 **`editor-log=active/quiet/missing`**。只显示固定类别，原始日志、路径与完整进程信息仍保密。CPU 活动不等于构建有实质性进展，所以 `--max-no-phase` 的阶段限制仍保留。
+- 控制台连续静默约 10 分钟时，`ci/capture-unity-hang.py` 会**仅在加密诊断路径**收集 Editor/AssetImportWorker 日志尾部、Package Manager/Unity Licensing Client 日志尾部，以及 macOS 可用时 Unity Editor 进程 4 秒的 `sample` 线程栈。Watchdog 真正终止前再次采样，采集器有严格超时且不会向公开控制台输出私有信息。
+- Android **构建阶段**的真实无活动 Watchdog 从 2700 秒（45 分钟）调整为 **1800 秒（30 分钟）**，前提是 stdout、Editor.log、进程 CPU 和监控的其他活动信号均未显示新活动；Unity 安装阶段仍独立保留 2700 秒。
+- `tests/test_unity_health.py` 及工作流回归测试覆盖 CPU 时间解析、Editor.log 变化、独立加密诊断目录和无 Secrets 的执行入口。
+
+**实际停滞根因仍未确认。** 最优先证据是第 32 次构建 age 解密后的 `private-logs/unity-build.log`、`private-logs/editor.log`、`private-logs/health.jsonl`（以及可用的许可证诊断）；在审核并脱敏前，不要公开这些内容。仅从最后一个编译阶段无法判断是编译本身、Unity AssetImportWorker、UPM、许可证还是 GameCI 日志桥接问题。下一次真正的 Unity 构建应先以这些日志明确根因，而不是继续猜测更换 Unity 版本或重装编辑器。
+
+## 2026-10-30：Android 模块全部验证通过，GameCI 兼容路径前置校验
 
 最新 Android macOS Runner 在 **T+19m** 显示 `Unity Android components verified on disk`，证明 Unity Editor、Android Build Support、SDK、NDK、OpenJDK 的实际目录检查已通过。后续失败发生在 `GameCI compatibility Editor symlink creation started`，属于**GameCI 路径兼容步骤**，不是 Unity 模块安装失败。该轮公开日志将多种路径问题统一归类为 `GameCI Editor compatibility path preparation failed`，因此**尚不能仅凭这些公开日志确认究竟是哪条路径操作失败**。
 
