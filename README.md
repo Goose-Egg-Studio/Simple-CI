@@ -94,7 +94,20 @@ Android 工作流 `.github/workflows/android.yml` 使用 **`macos-26-intel`**（
 - Android 成功构建将上传 **3 个相互独立的 age 加密压缩 Artifact**：`android-apk-sealed-<run_id>`、`android-aab-sealed-<run_id>`、`android-logs-sealed-<run_id>`。每个 Artifact 只包含一个 `.tar.gz.age`，分别是 `Simple.apk`、`Simple.aab`、`private-logs/`。失败时不会发布不完整 APK/AAB，但仍尽力上传独立的加密诊断包。
 
 
-### Android 构建健康检查与失败隔离
+### 2026-10-30：公共 CI 代码审计集中整改
+
+在不查看或输出私有仓库源码、age 身份私钥和签名凭据的前提下，已完成以下公共代码整改：
+
+- Android/iOS 均用 `ci/safe-extract.py` 替换直接 `tar -xzf`，Android 的额外 macOS 加密构建包亦同；非法 tar 成员拒绝解封执行，脚本执行权限保留。
+- iOS 的 `cli-build-ios.sh` 改由 `safe-progress.py --platform ios` 监控，原始日志仅进加密诊断，健康记录位于 `health-ios.jsonl`。
+- 两平台先用 `ci/validate-source-ref.py` 校验输入的 `source_ref`，拒绝危险 shell/Git 元字符；Android Unity 外部安装器在任何解密脚本、源码检出或源码 App Token 获取之前执行。
+- 官方 GitHub Actions `checkout`、`upload-artifact`、`create-github-app-token` 均固定到已核验的完整 Commit SHA。
+- Android APK/AAB 上传前检查 ZIP 结构与可读的 AndroidManifest.xml（不替代 Addressables、签名及运行完整性验证）。
+- `Public CI safety checks` 使用无 Secrets 的 Ubuntu Runner 做 Python 语法、Shell 语法和 `tests/` 单元回归测试；测试包含归档穿越、目录链接、ZIP 产物、私密日志隔离、iOS 监控、source ref 和两平台 workflow 安全约束。
+
+**尚未验证/未解决：** 完整 Unity Android/iOS 构建未通过；Unity CLI Beta 下载和 GameCI 发布包的供应链校验尚未固定；两份 `.age` 构建实现无法从公开仓库直接审查内部逻辑；GitHub App Token 目前仍按安装组织范围创建（子模块可能跨多个私有仓库），需要在确认全部依赖库清单后进一步最小化授权范围。不能将上述静态修复当作 APK/AAB/IPA 完整验收。
+
+## Android 构建健康检查与失败隔离
 
 新版本的安全监控脚本独立于 Unity 原始日志读取循环，每 60 秒在公开 Actions 日志输出固定格式的心跳，并把详细指标写入**仅包含在加密诊断 Artifact 中**的 `private-logs/health.jsonl`。记录包括 Unity/GameCI 进程数量（仅按进程名统计，不采集命令行）、日志增长、磁盘剩余空间、最近识别的构建阶段及距离该阶段的耗时。不公开项目资源名、原始日志、命令行、工作目录或 Secret 值。
 
