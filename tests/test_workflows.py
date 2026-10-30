@@ -48,6 +48,8 @@ class WorkflowSecurityTests(unittest.TestCase):
             self.assertIn("github.triggering_actor", text)
             self.assertIn("permission-contents: read", text)
             self.assertIn("persist-credentials: false", text)
+            self.assertIn("python3 ci/ci/validate-source-ref.py", text)
+            self.assertLess(text.index("Validate selected private source ref"), text.index("Generate read-only source token"))
 
     def test_android_outputs_are_separately_encrypted(self):
         text = self.read("android.yml")
