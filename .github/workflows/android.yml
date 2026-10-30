@@ -236,8 +236,8 @@ jobs:
           if ! python3 -u ci/ci/safe-progress.py \
               --log "$RUNNER_TEMP/simple-private-logs/unity-build.log" \
               --health-log "$RUNNER_TEMP/simple-private-logs/health.jsonl" \
-              --heartbeat 60 --max-no-phase 7200 --max-no-output 2700 \
-              --min-free-gib 1.5 -- \
+              --heartbeat 60 --max-no-phase 7200 --max-no-output 1800 \
+              --diagnose-after 600 --min-free-gib 1.5 -- \
               bash "$RUNNER_TEMP/secure-ci/scripts/mac-build-android.sh"; then
             echo 'macOS Unity build failed; see age-encrypted diagnostics.'
             exit 1
