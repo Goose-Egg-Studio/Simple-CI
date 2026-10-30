@@ -76,23 +76,8 @@ jobs:
           set -euo pipefail
           brew install age >/dev/null 2>&1 || { echo 'crypto tool installation failed'; exit 1; }
 
-      - name: Unseal CI implementation
-        shell: bash
-        env:
-          CI_AGE_IDENTITY: ${{ secrets.CI_AGE_IDENTITY }}
-        run: |
-          set -euo pipefail
-          umask 077
-          KEY="$RUNNER_TEMP/simple-ci-private-age-identity"
-          TMP="$RUNNER_TEMP/simple-ci-private-scripts.tar.gz"
-          trap 'rm -f "$KEY" "$TMP"' EXIT
-          test -n "$CI_AGE_IDENTITY" || { echo 'CI identity missing'; exit 1; }
-          printf '%s\n' "$CI_AGE_IDENTITY" > "$KEY"
-          mkdir -p "$RUNNER_TEMP/secure-ci"
-          age -d -i "$KEY" -o "$TMP" ci/ci/sealed/secure-ci-scripts.tar.age > "$RUNNER_TEMP/simple-private-logs/ci-unseal.log" 2>&1 || { echo 'sealed CI could not be unlocked'; exit 1; }
-          python3 ci/ci/safe-extract.py --archive "$TMP" --destination "$RUNNER_TEMP/secure-ci" > "$RUNNER_TEMP/simple-private-logs/ci-extract.log" 2>&1 || { echo 'sealed CI could not be extracted'; exit 1; }
-          test -x "$RUNNER_TEMP/secure-ci/scripts/checkout-source.sh"
-
+      # Install the external GameCI tool before placing decrypted CI code,
+      # application source or any App token on this runner filesystem.
       - name: Install GameCI CLI privately (pinned installer)
         shell: bash
         run: |
@@ -112,6 +97,23 @@ jobs:
           } >"$LOG" 2>&1 || { echo 'GameCI CLI installation failed; see encrypted diagnostics'; exit 1; }
           echo "$RUNNER_TEMP/game-ci/bin" >> "$GITHUB_PATH"
           echo 'GameCI CLI installed.'
+
+      - name: Unseal CI implementation
+        shell: bash
+        env:
+          CI_AGE_IDENTITY: ${{ secrets.CI_AGE_IDENTITY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          KEY="$RUNNER_TEMP/simple-ci-private-age-identity"
+          TMP="$RUNNER_TEMP/simple-ci-private-scripts.tar.gz"
+          trap 'rm -f "$KEY" "$TMP"' EXIT
+          test -n "$CI_AGE_IDENTITY" || { echo 'CI identity missing'; exit 1; }
+          printf '%s\n' "$CI_AGE_IDENTITY" > "$KEY"
+          mkdir -p "$RUNNER_TEMP/secure-ci"
+          age -d -i "$KEY" -o "$TMP" ci/ci/sealed/secure-ci-scripts.tar.age > "$RUNNER_TEMP/simple-private-logs/ci-unseal.log" 2>&1 || { echo 'sealed CI could not be unlocked'; exit 1; }
+          python3 ci/ci/safe-extract.py --archive "$TMP" --destination "$RUNNER_TEMP/secure-ci" > "$RUNNER_TEMP/simple-private-logs/ci-extract.log" 2>&1 || { echo 'sealed CI could not be extracted'; exit 1; }
+          test -x "$RUNNER_TEMP/secure-ci/scripts/checkout-source.sh"
 
       - name: Generate read-only source token
         id: source-token
