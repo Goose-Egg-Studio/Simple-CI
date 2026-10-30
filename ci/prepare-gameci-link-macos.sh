@@ -57,8 +57,21 @@ if ! mkdir -p "$ROOT" >> "$LOG" 2>&1; then
 fi
 
 if [[ -L "$VERSION_PATH" ]]; then
-  if [[ "$(readlink "$VERSION_PATH")" != "$TARGET" ]]; then
-    fail unrecognized-link 55
+  current_target="$(readlink "$VERSION_PATH")"
+  if [[ "$current_target" != "$TARGET" ]]; then
+    # Portable Unity CLI can use <version>-x86_64 if the regular version
+    # slot is already occupied. Retarget ONLY the symlink we created earlier
+    # in the same job, and only when the expected old target is explicit.
+    if [[ -z "${SIMPLE_CI_LINK_EXPECTED_OLD_TARGET:-}" ]] ||
+       [[ "$current_target" != "$SIMPLE_CI_LINK_EXPECTED_OLD_TARGET" ]]; then
+      fail unrecognized-link 55
+    fi
+    if ! rm "$VERSION_PATH" >> "$LOG" 2>&1; then
+      if ! sudo -n rm "$VERSION_PATH" >> "$LOG" 2>&1; then
+        fail link-unwritable 58
+      fi
+    fi
+    printf 'retarget=owned-link-replaced\n' >> "$REPORT"
   fi
 elif [[ -e "$VERSION_PATH" ]]; then
   # An empty version directory is safe to replace. Never delete files,
