@@ -45,7 +45,7 @@ class ProgressTests(unittest.TestCase):
             "import sys;print('PRIVATE_IOS_ERROR', flush=True);sys.exit(7)"
         )
         self.assertEqual(process.returncode, 7)
-        self.assertIn("Private Ios build launched", process.stdout)
+        self.assertIn("Private iOS build launched", process.stdout)
         self.assertIn("Build failed (Unclassified failure)", process.stdout)
         self.assertIn("PRIVATE_IOS_ERROR", private)
         self.assertNotIn("PRIVATE_IOS_ERROR", process.stdout)
