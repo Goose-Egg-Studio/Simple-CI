@@ -103,6 +103,12 @@ def unity_log_files(home=None):
     base = Path(home) if home is not None else Path.home()
     roots = [base / "Library" / "Logs" / "Unity",
              base / ".config" / "unity3d"]
+    # Unity 6 can keep a project-specific Editor.log; older versions
+    # generally use the macOS global log. Observe both without reading
+    # their text into Actions output.
+    workspace = os.environ.get("GITHUB_WORKSPACE")
+    if workspace:
+        roots.append(Path(workspace) / "project" / "Logs")
     found = []
     for folder in roots:
         try:
