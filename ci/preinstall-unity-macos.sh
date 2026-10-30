@@ -147,6 +147,22 @@ test -x "$LOCAL_EDITOR" || {
   exit 32
 }
 
+# The portable CLI sometimes uses an architecture-suffixed version directory.
+# In that case retarget *only* the preflight link we own, never a third-party
+# Editor or unknown symlink. The normal fresh-runner path needs no changes.
+if [[ "$EDITOR_DIR" != "$WRITABLE_ROOT/$VERSION" ]]; then
+  if [[ "$EDITOR_DIR" != "$WRITABLE_ROOT/$VERSION-x86_64" ]]; then
+    printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_path_failure'
+    echo 'Unity CLI installed into an unexpected Editor directory.' >&2
+    exit 61
+  fi
+  SIMPLE_CI_LINK_ROOT="$STANDARD_ROOT" \
+  SIMPLE_CI_LINK_VERSION="$VERSION" \
+  SIMPLE_CI_LINK_TARGET="$EDITOR_DIR" \
+  SIMPLE_CI_LINK_EXPECTED_OLD_TARGET="$WRITABLE_ROOT/$VERSION" \
+    bash ci/ci/prepare-gameci-link-macos.sh
+fi
+
 # Android was requested by the same Editor install command. Check the real
 # payload before attempting any secondary operation.
 LOCAL_ANDROID="$EDITOR_DIR/PlaybackEngines/AndroidPlayer"
