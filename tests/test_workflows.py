@@ -38,6 +38,8 @@ class WorkflowSecurityTests(unittest.TestCase):
         android = self.read("android.yml")
         self.assertLess(android.index("Preinstall Unity Editor"), android.index("Unseal CI implementation"))
         self.assertLess(android.index("Preinstall Unity Editor"), android.index("Checkout private Unity source"))
+        self.assertLess(android.index("Install GameCI CLI privately"), android.index("Preinstall Unity Editor"))
+        self.assertLess(self.read("ios.yml").index("Install GameCI CLI privately"), self.read("ios.yml").index("Unseal CI implementation"))
 
     def test_private_build_workflows_are_dispatch_only(self):
         for filename in ("android.yml", "ios.yml"):
