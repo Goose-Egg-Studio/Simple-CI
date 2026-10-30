@@ -94,7 +94,17 @@ Android 工作流 `.github/workflows/android.yml` 使用 **`macos-26-intel`**（
 - Android 成功构建将上传 **3 个相互独立的 age 加密压缩 Artifact**：`android-apk-sealed-<run_id>`、`android-aab-sealed-<run_id>`、`android-logs-sealed-<run_id>`。每个 Artifact 只包含一个 `.tar.gz.age`，分别是 `Simple.apk`、`Simple.aab`、`private-logs/`。失败时不会发布不完整 APK/AAB，但仍尽力上传独立的加密诊断包。
 
 
-### 2026-10-30：确认 macOS AndroidPlayer 目录检查错误
+### 2026-10-30：Android 模块全部验证通过，GameCI 兼容路径前置校验
+
+最新 Android macOS Runner 在 **T+19m** 显示 `Unity Android components verified on disk`，证明 Unity Editor、Android Build Support、SDK、NDK、OpenJDK 的实际目录检查已通过。后续失败发生在 `GameCI compatibility Editor symlink creation started`，属于**GameCI 路径兼容步骤**，不是 Unity 模块安装失败。该轮公开日志将多种路径问题统一归类为 `GameCI Editor compatibility path preparation failed`，因此**尚不能仅凭这些公开日志确认究竟是哪条路径操作失败**。
+
+已直接审查 GameCI CLI **v0.1.48** 的公开 `src/logic/unity/platform-setup/setup-mac.ts`：它硬编码检查 `/Applications/Unity/Hub/Editor/<version>/Unity.app/Contents/MacOS/Unity`，而用户可写的 Unity CLI 自包含目录不在这里，因此仅设置 `UNITY_PATH` 不足以绕过其检查。
+
+修复：新增 `ci/prepare-gameci-link-macos.sh`，**在 Unity Editor 下载之前**预备这个单版本符号链接并验证能否创建。前置检查首先尝试普通用户权限，必要时使用无交互 `sudo -n`；已有非空 Editor 版本目录、未知符号链接和不安全的根链接会直接拒绝覆盖，只有空版本目录允许用 `rmdir` 安全替换。失败原因分别报告为权限类或目录冲突类，仅将详细系统错误存入 age 加密诊断（`gameci-path-preflight.txt`、`gameci-path-preflight-errors.log`）。下载后只验证这个**已存在的、目标正确的链接**和 Editor/Android 四个组件，不再在下载完成后才首次调用 `sudo ln`。
+
+此外，新增真正使用 `macos-26-intel`、**不下载 Unity、不使用任何 Secrets** 的 `macOS GameCI Editor path preflight` 工作流，使用假文件验证标准路径的 Editor 与 Android SDK/NDK/JDK 均可解析。它与 `tests/test_gameci_link.py` 的本地权限/冲突回归测试配合，可以在不耗费 19 分钟完整安装的情况下测试系统路径是否可用。该 macOS 探针的真实 Runner 结果仍需验收。
+
+## 2026-10-30：确认 macOS AndroidPlayer 目录检查错误
 
 最新版 CI 再次显示 Editor + Android 模块一体化安装命令成功，但验证报告 `AndroidPlayer`、SDK、NDK、OpenJDK 全部缺失。经比对 [Unity 2022.3 的 macOS Editor 实际模块加载记录](https://discussions.unity.com/t/unable-to-open-scene-after-installing-new-version-of-unity/919582) 和 [Meta 的 Unity macOS 环境安装文档](https://developers.meta.com/vr/documentation/unity/unity-software-setup/)，发现**根因是公开校验脚本的模块目录错误**：
 
