@@ -17,7 +17,9 @@ def main():
         hub = Path.home() / "Library" / "Application Support" / "UnityHub" / "logs"
         version = "2022.3.62f3"
         editor_root = Path("/Applications/Unity/Hub/Editor") / version / "Unity.app" / "Contents"
-        android_root = editor_root / "PlaybackEngines" / "AndroidPlayer"
+        # On macOS Unity 2022.3, AndroidPlayer is a sibling of Unity.app,
+        # not under Unity.app/Contents/PlaybackEngines.
+        android_root = editor_root.parent.parent / "PlaybackEngines" / "AndroidPlayer"
         state = {
             "hub_app_exists": Path("/Applications/Unity Hub.app").is_dir(),
             "editor_binary_exists": (editor_root / "MacOS" / "Unity").is_file(),
