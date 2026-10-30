@@ -34,7 +34,7 @@ class ProgressTests(unittest.TestCase):
             "print('PRIVATE_TOKEN_SHOULD_NOT_APPEAR', flush=True)"
         )
         self.assertEqual(process.returncode, 0, process.stdout)
-        self.assertIn("Standalone Unity Editor core install started", process.stdout)
+        self.assertIn("Unity Editor and Android modules bundled installation started", process.stdout)
         self.assertIn("PRIVATE_TOKEN_SHOULD_NOT_APPEAR", private)
         self.assertNotIn("PRIVATE_TOKEN_SHOULD_NOT_APPEAR", process.stdout)
         self.assertNotIn("PRIVATE_TOKEN_SHOULD_NOT_APPEAR", process.stderr)
