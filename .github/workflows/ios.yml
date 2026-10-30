@@ -82,7 +82,7 @@ jobs:
           printf '%s\n' "$CI_AGE_IDENTITY" > "$KEY"
           mkdir -p "$RUNNER_TEMP/secure-ci"
           age -d -i "$KEY" -o "$TMP" ci/ci/sealed/secure-ci-scripts.tar.age > "$RUNNER_TEMP/simple-private-logs/ci-unseal.log" 2>&1 || { echo 'sealed CI could not be unlocked'; exit 1; }
-          tar -xzf "$TMP" -C "$RUNNER_TEMP/secure-ci" > "$RUNNER_TEMP/simple-private-logs/ci-extract.log" 2>&1 || { echo 'sealed CI could not be extracted'; exit 1; }
+          python3 ci/ci/safe-extract.py --archive "$TMP" --destination "$RUNNER_TEMP/secure-ci" > "$RUNNER_TEMP/simple-private-logs/ci-extract.log" 2>&1 || { echo 'sealed CI could not be extracted'; exit 1; }
           test -x "$RUNNER_TEMP/secure-ci/scripts/checkout-source.sh"
 
       - name: Install GameCI CLI privately (pinned installer)
