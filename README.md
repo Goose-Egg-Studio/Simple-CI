@@ -131,6 +131,19 @@ Android 工作流 `.github/workflows/android.yml` 使用 **`macos-26-intel`**（
 
 参考：[Unity 官方 Android 依赖目录](https://docs.unity3d.com/ja/2022.3/Manual/android-sdksetup.html) 与 [Hub 模块 ID 参考](https://docs.unity.cn/hub/manual/HubCLI.html)。这是有条件的恢复策略，不代表已经确定是 Unity CLI 漏装子模块；若目录结构变化，诊断包会提供证据。
 
+
+### 2026-10-30：Unity CLI 下载期间 Heartbeat 静默的处理
+
+某次 macOS Runner 在 Unity Editor 核心安装时，健康心跳记录只到 T+3m，但用户反馈 Actions 页面其后约半小时没有新记录。**目前无法仅凭公开日志区分 GitHub 页面刷新延迟、独立监控线程异常、或整个 Runner 运行异常。** 原监控代码每 60 秒应强制输出心跳；因此 30 分钟不见心跳本身不正常，即使 Unity 正在正常下载。
+
+监控代码现做以下安全修正：
+
+- macOS 的独立 Unity CLI 可执行文件名称本身就是 `unity`。以前按进程 basename 将其报告成 `editor=seen` 是**假阳性**；现在只把明确位于 `Unity.app/Contents/MacOS/Unity` 的进程计为 Editor，独立 CLI 单独标记 `cli=`。若 `ps` 只返回模糊名称，则 `editor=unknown`，不能谎称 Editor 已启动。
+- 没有 Unity Hub 进程时，不再扫描 Hub 的旧临时下载目录；避免大型遗留目录遍历延迟独立心跳。
+- 主监控循环每 0.3 秒检查健康线程是否意外终止。如果线程消失，主动终止构建并尝试加密上传日志，而不是静默等待 GitHub 的 180 分钟超时。注意这**不能**保证应对整个 Runner 卡死或进程被冻结的情况。
+
+上述修复只影响 **新触发的 workflow run**；已经运行的任务会一直使用其启动时检出的旧代码。不要把旧日志中 `editor=seen` 当作 Unity Editor 实际正在运行的证据。
+
 ## Android 最新安装路线：自包含 Editor（2026-10-30）
 
 **新一轮实际结果（T+12m）：** 独立 Unity CLI 下载并安装 Editor 核心成功，但脚本在本地可执行文件位置检查中失败。根据 Unity 官方的 [Editor 安装参考](https://github.com/Unity-Technologies/skills/blob/main/skills/unity-cli/references/editors-install.md)，`--download-directory <dir>` 会在 `<dir>` 下**自动创建版本子目录**。之前脚本传入 `<root>/<version>`，而自己只在 `<root>/<version>/Unity.app` 检查，目录多嵌套了一层。现已将 CLI 的 Editor 和 Android 模块操作都改为传入 **`$RUNNER_TEMP/simple-unity-editors` 根目录**；模块操作显式附带 `--editor-version 2022.3.62f3`，安装后仅检查 `<root>/<version>` 和 `<root>/<version>-x86_64` 两种文档支持的路径。目录布局的布尔诊断仅保存在 age 加密的 `unity-cli-editor-layout.txt` 中。当前尚未在真实 Runner 中验证修复后的模块安装和完整 APK/AAB 构建。
