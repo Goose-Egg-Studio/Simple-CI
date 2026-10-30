@@ -16,6 +16,8 @@ STANDARD_ROOT="/Applications/Unity/Hub/Editor"
 # Do not ask a headless installer to write directly under /Applications.
 # All Editor payloads remain on the same runner disk, and are ephemeral.
 WRITABLE_ROOT="$RUNNER_TEMP/simple-unity-editors"
+# --download-directory takes the *parent*, and CLI itself appends
+# /<version> (or /<version>-<architecture> if the slot is occupied).
 EDITOR_DIR="$WRITABLE_ROOT/$VERSION"
 CLI_HOME="$RUNNER_TEMP/simple-unity-cli"
 # Keep CLI runtime data in the same per-job directory as its executable.
@@ -96,19 +98,44 @@ run_cli_stage() {
 printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_editor_start'
 run_cli_stage editor install "$VERSION" \
   --changeset "$CHANGESET" --architecture x86_64 \
-  --download-directory "$EDITOR_DIR" \
+  --download-directory "$WRITABLE_ROOT" \
   --yes --accept-eula
 printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_editor_done'
+
+# A fresh -d install puts macOS Unity.app at <download-root>/<version>.
+# In the rare case the version slot is occupied, CLI may use a
+# <version>-<arch> directory. Inspect only these two known candidates;
+# never glob arbitrary directories or trust an unrelated Unity binary.
+# The diagnostic records only presence/shape, not raw paths.
+{
+  if [ -x "$WRITABLE_ROOT/$VERSION/Unity.app/Contents/MacOS/Unity" ]; then
+    printf 'layout=version\n'
+    EDITOR_DIR="$WRITABLE_ROOT/$VERSION"
+  elif [ -x "$WRITABLE_ROOT/$VERSION-x86_64/Unity.app/Contents/MacOS/Unity" ]; then
+    printf 'layout=version-x86_64\n'
+    EDITOR_DIR="$WRITABLE_ROOT/$VERSION-x86_64"
+  else
+    printf 'layout=not-found\n'
+  fi
+  for candidate in "$WRITABLE_ROOT/$VERSION" "$WRITABLE_ROOT/$VERSION-x86_64" "$WRITABLE_ROOT/$VERSION/$VERSION"; do
+    if [ -d "$candidate" ]; then
+      printf 'candidate-dir=present\n'
+    else
+      printf 'candidate-dir=absent\n'
+    fi
+  done
+} > "$SIMPLE_CI_LOG_DIR/unity-cli-editor-layout.txt"
+LOCAL_EDITOR="$EDITOR_DIR/Unity.app/Contents/MacOS/Unity"
 test -x "$LOCAL_EDITOR" || {
   printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_editor_path_invalid'
-  echo 'Editor binary missing from self-contained download directory.' >&2
+  echo 'Editor binary missing in the documented self-contained layout; see encrypted layout diagnostics.' >&2
   exit 32
 }
 
 printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_modules_start'
 run_cli_stage modules install-modules \
-  --download-directory "$EDITOR_DIR" \
-  --module android --child-modules --accept-eula
+  --editor-version "$VERSION" --download-directory "$WRITABLE_ROOT" \
+  --module android --child-modules --yes --accept-eula
 printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_modules_done'
 
 LOCAL_ANDROID="$EDITOR_DIR/Unity.app/Contents/PlaybackEngines/AndroidPlayer"
