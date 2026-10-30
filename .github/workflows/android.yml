@@ -45,6 +45,14 @@ jobs:
           mkdir -p "$RUNNER_TEMP/simple-private-logs"
           printf 'Platform: android\nRun: %s\n' "$GITHUB_RUN_ID" > "$RUNNER_TEMP/simple-private-logs/build-status.txt"
 
+      - name: Validate selected private source ref
+        shell: bash
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          python3 ci/ci/validate-source-ref.py --ref "$SOURCE_REF"
+
       - name: Install encryption tools
         shell: bash
         run: |
