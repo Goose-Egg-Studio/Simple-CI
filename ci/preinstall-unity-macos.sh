@@ -217,11 +217,15 @@ if ! check_android_components "final"; then
       \( -name AndroidPlayer -o -name PlaybackEngines -o -name SDK -o -name NDK -o -name OpenJDK \) \
       -print 2>/dev/null | sed "s|^$WRITABLE_ROOT/||" | head -n 100
     printf '\neditor-metadata:\n'
-    for metadata in "$EDITOR_DIR/modules.json" "$EDITOR_DIR/metadata.hub.json"; do
-      if [[ -f "$metadata" ]]; then
-        printf 'present\n'
+    for name in modules.json metadata.hub.json; do
+      metadata="$EDITOR_DIR/$name"
+      if [[ -f "$metadata" && ! -L "$metadata" ]]; then
+        printf '%s=present\n' "$name"
+        # Copy a bounded excerpt of the CLI's own manifest ONLY into the
+        # encrypted diagnostic directory. No metadata reaches public output.
+        head -c 262144 "$metadata" > "$SIMPLE_CI_LOG_DIR/unity-cli-$name.snapshot" || true
       else
-        printf 'absent\n'
+        printf '%s=absent\n' "$name"
       fi
     done
     printf '\ncli-summary-of-final-install:\n'
