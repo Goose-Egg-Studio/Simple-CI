@@ -94,6 +94,23 @@ class WorkflowSecurityTests(unittest.TestCase):
             snapshot,
         )
 
+    def test_gameci_link_preflight_occurs_before_any_unity_download(self):
+        installer = (ROOT / "ci" / "preinstall-unity-macos.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertLess(
+            installer.index("bash ci/ci/prepare-gameci-link-macos.sh"),
+            installer.index("https://unity.com/install.sh"),
+        )
+        self.assertLess(
+            installer.index("SIMPLE_CI_PHASE=unity_cli_path_start"),
+            installer.index("run_cli_stage editor install"),
+        )
+        self.assertIn("SIMPLE_CI_PHASE=unity_cli_gameci_path_verified", installer)
+        self.assertIn("test -d \"$ANDROID/SDK\"", installer)
+        self.assertIn("test -d \"$ANDROID/NDK\"", installer)
+        self.assertIn("test -d \"$ANDROID/OpenJDK\"", installer)
+
     def test_android_outputs_are_separately_encrypted(self):
         text = self.read("android.yml")
         self.assertIn("android-apk-sealed-", text)
