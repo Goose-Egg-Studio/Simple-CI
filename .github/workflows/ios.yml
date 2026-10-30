@@ -62,6 +62,14 @@ jobs:
             xcodebuild -version
             xcodebuild -version | grep -Fxq 'Xcode 26.6'
           } > "$RUNNER_TEMP/simple-private-logs/xcode-setup.log" 2>&1
+      - name: Validate selected private source ref
+        shell: bash
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          python3 ci/ci/validate-source-ref.py --ref "$SOURCE_REF"
+
       - name: Install encryption tools
         shell: bash
         run: |
