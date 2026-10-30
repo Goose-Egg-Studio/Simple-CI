@@ -1,0 +1,67 @@
+name: macOS GameCI Editor path preflight
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "ci/prepare-gameci-link-macos.sh"
+      - "tests/test_gameci_link.py"
+      - ".github/workflows/macos-gameci-preflight.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  path-check:
+    runs-on: macos-26-intel
+    timeout-minutes: 10
+    steps:
+      - name: Checkout public path helper
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Validate actual macOS standard-path permissions without Unity
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          export SIMPLE_CI_LOG_DIR="$RUNNER_TEMP/simple-link-probe"
+          export SIMPLE_CI_LINK_ROOT="/Applications/Unity/Hub/Editor"
+          export SIMPLE_CI_LINK_VERSION="2022.3.62f3"
+          export SIMPLE_CI_LINK_TARGET="$RUNNER_TEMP/simple-unity-editors/2022.3.62f3"
+          mkdir -p "$SIMPLE_CI_LOG_DIR"
+
+          if ! bash ci/prepare-gameci-link-macos.sh > "$SIMPLE_CI_LOG_DIR/console.log" 2>&1; then
+            if grep -Fq "SIMPLE_CI_PHASE=unity_cli_path_conflict" "$SIMPLE_CI_LOG_DIR/console.log"; then
+              echo "::error title=GameCI path::macOS runner has an incompatible existing Unity Editor path; no Unity downloaded."
+            elif grep -Fq "SIMPLE_CI_PHASE=unity_cli_path_permission" "$SIMPLE_CI_LOG_DIR/console.log"; then
+              echo "::error title=GameCI path::macOS runner cannot create the standard Unity Editor link; no Unity downloaded."
+            else
+              echo "::error title=GameCI path::macOS standard Editor path preflight failed; no Unity downloaded."
+            fi
+            exit 1
+          fi
+
+          # Simulate exactly the filesystem layout already verified on a
+          # successful Unity portable installation, without downloading it.
+          mkdir -p "$SIMPLE_CI_LINK_TARGET/Unity.app/Contents/MacOS"
+          mkdir -p "$SIMPLE_CI_LINK_TARGET/PlaybackEngines/AndroidPlayer/SDK"
+          mkdir -p "$SIMPLE_CI_LINK_TARGET/PlaybackEngines/AndroidPlayer/NDK"
+          mkdir -p "$SIMPLE_CI_LINK_TARGET/PlaybackEngines/AndroidPlayer/OpenJDK"
+          : > "$SIMPLE_CI_LINK_TARGET/Unity.app/Contents/MacOS/Unity"
+          chmod 700 "$SIMPLE_CI_LINK_TARGET/Unity.app/Contents/MacOS/Unity"
+
+          STANDARD_VERSION="$SIMPLE_CI_LINK_ROOT/$SIMPLE_CI_LINK_VERSION"
+          test -x "$STANDARD_VERSION/Unity.app/Contents/MacOS/Unity"
+          test -d "$STANDARD_VERSION/PlaybackEngines/AndroidPlayer/SDK"
+          test -d "$STANDARD_VERSION/PlaybackEngines/AndroidPlayer/NDK"
+          test -d "$STANDARD_VERSION/PlaybackEngines/AndroidPlayer/OpenJDK"
+          printf '%s\n' "GameCI Editor path and Android module symlink resolution verified on macOS 26 Intel."
+
+          # Only remove the exact link we created; do not touch any real
+          # Editor installation or the parent Unity directories.
+          if [[ -L "$STANDARD_VERSION" && "$(readlink "$STANDARD_VERSION")" == "$SIMPLE_CI_LINK_TARGET" ]]; then
+            rm "$STANDARD_VERSION" 2>/dev/null || sudo -n rm "$STANDARD_VERSION"
+          fi
