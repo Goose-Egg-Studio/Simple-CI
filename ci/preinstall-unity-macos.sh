@@ -30,6 +30,17 @@ ANDROID="$STANDARD_ROOT/$VERSION/PlaybackEngines/AndroidPlayer"
 printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_bootstrap_start'
 mkdir -p "$CLI_HOME" "$WRITABLE_ROOT"
 chmod 700 "$CLI_HOME" "$WRITABLE_ROOT"
+
+# Preflight the exact hardcoded GameCI path before downloading any Unity
+# payload. The symlink may be temporarily dangling until the CLI installs
+# the Editor. A permissions/conflict failure must cost seconds, not 19m.
+printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_path_start'
+SIMPLE_CI_LINK_ROOT="$STANDARD_ROOT" \
+SIMPLE_CI_LINK_VERSION="$VERSION" \
+SIMPLE_CI_LINK_TARGET="$EDITOR_DIR" \
+  bash ci/ci/prepare-gameci-link-macos.sh
+printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_path_done'
+
 # Homebrew's unity-cli cask previously supplied 1.0.0-beta.6, which produced
 # permission errors on this runner. Follow Unity's official, maintained
 # beta-channel installer instead of relying on the cask's version.
@@ -251,50 +262,28 @@ if ! check_android_components "final"; then
 fi
 printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_modules_validated'
 
-# GameCI v0.1.48 requires the legacy /Applications path. Link ONLY this
-# pinned version; never replace/remove the root or unrelated installations.
-# All actual Editor files stay in the runner-owned self-contained directory.
-printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_path_start'
-if [[ -L "$STANDARD_ROOT" ]]; then
-  printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_path_failure'
-  echo 'Unexpected GameCI Editor root symlink; refusing to traverse it.' >&2
-  exit 52
-fi
-if ! sudo -n mkdir -p "$STANDARD_ROOT"; then
-  printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_path_failure'
-  echo 'Unable to create the standard GameCI Editor parent directory.' >&2
-  exit 53
-fi
+# The version-specific link was created during preflight, before the
+# expensive Editor download. Fail closed rather than modifying unrelated
+# files if the CLI ever installs a different version/architecture layout.
 STANDARD_VERSION="$STANDARD_ROOT/$VERSION"
-if [[ -L "$STANDARD_VERSION" ]]; then
-  if [[ "$(readlink "$STANDARD_VERSION")" != "$EDITOR_DIR" ]]; then
-    printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_path_failure'
-    echo 'Unrecognized existing GameCI Editor symlink; refusing replacement.' >&2
-    exit 46
-  fi
-elif [[ -e "$STANDARD_VERSION" ]]; then
+if [[ ! -L "$STANDARD_VERSION" ]] ||
+   [[ "$(readlink "$STANDARD_VERSION")" != "$EDITOR_DIR" ]]; then
   printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_path_failure'
-  echo 'Existing real Editor version directory; refusing to overwrite.' >&2
-  exit 47
-else
-  if ! sudo -n ln -s "$EDITOR_DIR" "$STANDARD_VERSION"; then
-    printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_path_failure'
-    echo 'Unable to create the GameCI compatibility version symlink.' >&2
-    exit 48
-  fi
+  echo 'GameCI path no longer matches the validated portable Unity Editor; see sealed diagnostics.' >&2
+  exit 50
 fi
 test -x "$EDITOR" || {
   printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_path_failure'
-  echo 'GameCI cannot resolve the Editor through its required standard path.' >&2
-  exit 50
+  echo 'GameCI cannot resolve the Editor at its standard path.' >&2
+  exit 51
 }
 test -d "$ANDROID/SDK" && test -d "$ANDROID/NDK" &&
   test -d "$ANDROID/OpenJDK" || {
     printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_path_failure'
-    echo 'GameCI cannot resolve Android dependencies through its standard path.' >&2
-    exit 51
+    echo 'GameCI cannot resolve Android modules at its standard path.' >&2
+    exit 52
   }
-printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_path_done'
+printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_gameci_path_verified'
 
 {
   printf 'Installer=official standalone Unity CLI beta channel\n'
