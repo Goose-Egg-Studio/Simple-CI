@@ -230,7 +230,7 @@ def run():
             command = [sys.executable, str(Path(__file__).with_name("capture-unity-hang.py")),
                        "--dir", str(path.parent), "--pgid", str(proc.pid), "--tag", tag]
             safe_env = {k: os.environ[k] for k in
-                        ("PATH", "HOME", "RUNNER_TEMP", "TMPDIR")
+                        ("PATH", "HOME", "RUNNER_TEMP", "TMPDIR", "GITHUB_WORKSPACE")
                         if k in os.environ}
             try:
                 subprocess.run(command, env=safe_env, stdout=subprocess.DEVNULL,
