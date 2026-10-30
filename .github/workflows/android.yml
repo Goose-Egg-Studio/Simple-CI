@@ -74,14 +74,14 @@ jobs:
           printf '%s\n' "$CI_AGE_IDENTITY" > "$KEY"
           mkdir -p "$RUNNER_TEMP/secure-ci"
           age -d -i "$KEY" -o "$TMP" ci/ci/sealed/secure-ci-scripts.tar.age > "$RUNNER_TEMP/simple-private-logs/ci-unseal.log" 2>&1 || { echo 'sealed CI could not be unlocked'; exit 1; }
-          tar -xzf "$TMP" -C "$RUNNER_TEMP/secure-ci" > "$RUNNER_TEMP/simple-private-logs/ci-extract.log" 2>&1 || { echo 'sealed CI could not be extracted'; exit 1; }
+          python3 ci/ci/safe-extract.py --archive "$TMP" --destination "$RUNNER_TEMP/secure-ci" > "$RUNNER_TEMP/simple-private-logs/ci-extract.log" 2>&1 || { echo 'sealed CI could not be extracted'; exit 1; }
           test -x "$RUNNER_TEMP/secure-ci/scripts/checkout-source.sh"
           # Native macOS implementation is separately age-sealed to preserve
           # the known-good Linux implementation for a quick rollback.
           MAC_TMP="$RUNNER_TEMP/simple-ci-macos-build.tar.gz"
           trap 'rm -f "$KEY" "$TMP" "$MAC_TMP"' EXIT
           age -d -i "$KEY" -o "$MAC_TMP" ci/ci/sealed/macos-android-extra.age > "$RUNNER_TEMP/simple-private-logs/macos-unseal.log" 2>&1 || { echo 'macOS build implementation could not be unlocked'; exit 1; }
-          tar -xzf "$MAC_TMP" -C "$RUNNER_TEMP/secure-ci" > "$RUNNER_TEMP/simple-private-logs/macos-extract.log" 2>&1 || { echo 'macOS build implementation could not be extracted'; exit 1; }
+          python3 ci/ci/safe-extract.py --archive "$MAC_TMP" --destination "$RUNNER_TEMP/secure-ci" > "$RUNNER_TEMP/simple-private-logs/macos-extract.log" 2>&1 || { echo 'macOS build implementation could not be extracted'; exit 1; }
           test -x "$RUNNER_TEMP/secure-ci/scripts/mac-build-android.sh"
           test -s "$RUNNER_TEMP/secure-ci/scripts/SimpleCISealedMacAndroid.cs"
 
