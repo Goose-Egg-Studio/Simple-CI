@@ -8,7 +8,27 @@ import argparse
 import os
 import sys
 import tarfile
+import zipfile
 from pathlib import Path
+
+
+def validate_android_package(file, kind):
+    """Reject truncated/incorrect ZIPs before publishing a sealed artifact.
+
+    This is only a structural gate. Gameplay resources and signatures must
+    still be verified by the sealed Unity build before this script is called.
+    """
+    manifest = "AndroidManifest.xml" if kind == "apk" else "base/manifest/AndroidManifest.xml"
+    try:
+        with zipfile.ZipFile(file, "r") as package:
+            member = package.getinfo(manifest)
+            if member.is_dir() or member.file_size == 0 or member.file_size > 8 * 1024 * 1024:
+                raise RuntimeError("invalid Android manifest")
+            with package.open(member) as source:
+                if not source.read(1):
+                    raise RuntimeError("unreadable Android manifest")
+    except (zipfile.BadZipFile, KeyError, OSError) as exc:
+        raise RuntimeError("Android archive does not contain a readable manifest") from exc
 
 
 def run():
@@ -29,6 +49,7 @@ def run():
                 raise RuntimeError("symlinked output")
             if not file.is_file() or file.stat().st_size == 0 or not file.resolve().is_relative_to(dist.resolve()):
                 raise RuntimeError("invalid build artifact")
+            validate_android_package(file, args.kind)
             archive.add(file, arcname="build-outputs/Simple." + args.kind, recursive=False)
         else:
             root = Path(os.environ["RUNNER_TEMP"]) / "simple-private-logs"
