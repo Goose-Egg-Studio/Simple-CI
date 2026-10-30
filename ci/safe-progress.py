@@ -93,7 +93,7 @@ def run():
     path.parent.mkdir(parents=True, exist_ok=True)
     health_path.parent.mkdir(parents=True, exist_ok=True)
     start = time.monotonic()
-    state = {"phase": "startup", "phase_time": start, "log_time": start, "progress_time": start}
+    state = {"phase": "startup", "phase_time": start, "log_time": start, "progress_time": start, "heartbeat_time": start}
     seen_editor = set()
     seen_script = set()
     failures = set()
@@ -269,6 +269,10 @@ def run():
                     int((now - start) / 60), "growing" if active else "quiet",
                     "active" if hub_growth >= 1024 * 1024 or disk_activity else "quiet",
                     editor_presence, presence(cli_count), presence(hub_count), disk))
+                # A heartbeat counts only after it was successfully emitted.
+                # The reader thread watches this even if this thread is alive
+                # but stuck in disk_usage, ps or a log I/O call.
+                state["heartbeat_time"] = time.monotonic()
                 reason = None
                 if 0 <= free_gib < args.min_free_gib:
                     reason = "low disk space"
@@ -305,9 +309,13 @@ def run():
                     break
                 # A failed health thread must never leave the private
                 # installer silently running until the 180-minute job cap.
-                if not watcher.is_alive() and not timeout_reason:
+                if not timeout_reason and not watcher.is_alive():
                     timeout_reason.append("health monitor stopped unexpectedly")
                     notice("Watchdog stopping build: health monitor stopped unexpectedly; sealed diagnostics will be retained")
+                    terminate_group(proc)
+                elif not timeout_reason and time.monotonic() - state["heartbeat_time"] >= max(3 * args.heartbeat, 90):
+                    timeout_reason.append("health monitor heartbeat stalled")
+                    notice("Watchdog stopping build: health monitor heartbeat stalled; sealed diagnostics will be retained")
                     terminate_group(proc)
                 time.sleep(0.3)
         code = proc.wait()
