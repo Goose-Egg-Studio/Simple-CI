@@ -14,7 +14,7 @@ Android 的 APK、AAB、诊断日志分别打包，并用 `ci/artifact-recipient
 
 ## iOS 产物
 
-iOS 当前仍使用一个 `ios-<run_id>.tar.age` 加密包，其中可能包含 `private-logs/` 和已有的 `build-outputs/`；成功签名且上传 TestFlight 的行为由私有脚本负责。**当前 iOS 工作流尚未接入 Android 的安全心跳监控**。
+iOS 当前仍使用一个 `ios-<run_id>.tar.age` 加密包，其中可能包含 `private-logs/` 和已有的 `build-outputs/`；成功签名且上传 TestFlight 的行为由私有脚本负责。iOS 构建已通过 `safe-progress.py --platform ios` 接入安全心跳、Watchdog 和独立加密健康记录 `health-ios.jsonl`。
 
 ## 日志保护边界
 
@@ -36,4 +36,6 @@ tar -xzf android-logs.tar.gz
 
 ## 未完成的安全硬化
 
-公共辅助脚本 `ci/safe-extract.py` 可拒绝路径穿越、符号链接与超大 tar 成员，但**现有 Android/iOS Workflow 的解封步骤尚未改用它**，仍直接调用 `tar -xzf`。在工作流变更获批前，不应声称这个防护已经生效。两份 `.age` 私有构建实现目前也未在本次公开源码审计中解密审阅。
+**两套工作流已实际接入** `ci/safe-extract.py`：Android 的公共脚本包与 macOS 附加包、iOS 的公共脚本包均先校验成员再解压，拒绝绝对路径、`..`、链接、特殊文件及过大的文件和文件数。相关回归测试位于 `tests/`，由无 Secrets 的 `Public CI safety checks` 工作流执行。GitHub 官方 Actions 已固定到核验过的 Commit SHA；Android 第三方 Unity CLI 安装安排在私有脚本、源码及 GitHub App Token 获取之前。
+
+**仍未覆盖的内容：** 两份 `.age` 私有构建实现尚未解密审阅；Unity CLI Beta 安装器和 GameCI 下载的发布包仍有供应链版本/完整性漂移风险；真实 Android/iOS 构建、资源完整性、签名和实机验证仍需要集成测试。
