@@ -53,6 +53,20 @@ class WorkflowSecurityTests(unittest.TestCase):
             self.assertIn("python3 ci/ci/validate-source-ref.py", text)
             self.assertLess(text.index("Validate selected private source ref"), text.index("Generate read-only source token"))
 
+    def test_portable_unity_install_bundles_android_support(self):
+        installer = (ROOT / "ci" / "preinstall-unity-macos.sh").read_text(
+            encoding="utf-8"
+        )
+        start = installer.index("run_cli_stage editor install")
+        validate = installer.index("SIMPLE_CI_PHASE=unity_cli_modules_validate_start")
+        stage = installer[start:validate]
+        self.assertIn('--download-directory "$WRITABLE_ROOT"', stage)
+        self.assertIn("--module android --child-modules", stage)
+        self.assertNotIn("run_cli_stage modules install-modules", stage)
+        self.assertIn("if [[ -d \"$LOCAL_ANDROID\" ]]", installer)
+        self.assertIn("SIMPLE_CI_PHASE=unity_cli_android_payload_absent", installer)
+        self.assertIn("unity-android-module-locations.txt", installer)
+
     def test_android_outputs_are_separately_encrypted(self):
         text = self.read("android.yml")
         self.assertIn("android-apk-sealed-", text)
