@@ -118,6 +118,19 @@ Android 工作流 `.github/workflows/android.yml` 使用 **`macos-26-intel`**（
 
 这是 **watchdog 误杀风险的修复，不是 Unity Hub 下载问题本身已解决的证明**。建议下一次观察 Hub 自身下载进度、实际安装完成标记；若仍无法安装，再考虑改用 Unity 官方独立 CLI 或预安装 Editor + Android 模块。不要因为超出 25 分钟没有普通日志就手动取消构建。
 
+### 2026-10-30：Editor + Android 模块安装返回成功，但磁盘验证失败
+
+本次 macOS Runner 显示 Unity Editor 在 T+2m 安装命令正常结束，Android 模块在 T+4m 安装命令正常结束，但随即触发通用错误，**没有到达** `GameCI compatibility Editor symlink creation started`。根据当时的安装脚本，失败点限定为 `AndroidPlayer`、`SDK`、`NDK`、`OpenJDK` 四个目录检查之一。公开日志无法确定具体哪一个目录缺失；成功退出的 CLI 命令也不能代替本地文件完整性检查。
+
+已增加以下逻辑：
+
+- 每次分别验证四个目录的存在性，将 `present/missing` 状态写入 **仅 age 加密的** `unity-android-components.txt`。
+- 若有缺失，限定**只重试一次**：使用 `unity install-modules --editor-version 2022.3.62f3 --download-directory <runner-owned-root> --module android --module android-sdk-ndk-tools --module android-open-jdk --child-modules --reinstall --yes --accept-eula`。不依赖隐式子模块集合是否完整。
+- 重试后仍有缺失时立即拒绝构建，并发布对应的安全阶段提示：Android Support / SDK / NDK / OpenJDK 缺失；模块位置诊断（仅安装目录内匹配目录的相对路径）放入独立加密日志 `unity-android-module-locations.txt`。
+- **不能为通过 CI 而跳过依赖完整性验证**。即使全部组件通过，后续 GameCI 构建及真实 APK/AAB 仍需另行验证。
+
+参考：[Unity 官方 Android 依赖目录](https://docs.unity3d.com/ja/2022.3/Manual/android-sdksetup.html) 与 [Hub 模块 ID 参考](https://docs.unity.cn/hub/manual/HubCLI.html)。这是有条件的恢复策略，不代表已经确定是 Unity CLI 漏装子模块；若目录结构变化，诊断包会提供证据。
+
 ## Android 最新安装路线：自包含 Editor（2026-10-30）
 
 **新一轮实际结果（T+12m）：** 独立 Unity CLI 下载并安装 Editor 核心成功，但脚本在本地可执行文件位置检查中失败。根据 Unity 官方的 [Editor 安装参考](https://github.com/Unity-Technologies/skills/blob/main/skills/unity-cli/references/editors-install.md)，`--download-directory <dir>` 会在 `<dir>` 下**自动创建版本子目录**。之前脚本传入 `<root>/<version>`，而自己只在 `<root>/<version>/Unity.app` 检查，目录多嵌套了一层。现已将 CLI 的 Editor 和 Android 模块操作都改为传入 **`$RUNNER_TEMP/simple-unity-editors` 根目录**；模块操作显式附带 `--editor-version 2022.3.62f3`，安装后仅检查 `<root>/<version>` 和 `<root>/<version>-x86_64` 两种文档支持的路径。目录布局的布尔诊断仅保存在 age 加密的 `unity-cli-editor-layout.txt` 中。当前尚未在真实 Runner 中验证修复后的模块安装和完整 APK/AAB 构建。
