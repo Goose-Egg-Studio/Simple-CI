@@ -25,7 +25,7 @@ export UNITY_CLI_HOME="$CLI_HOME"
 CLI="$CLI_HOME/bin/unity"
 LOCAL_EDITOR="$EDITOR_DIR/Unity.app/Contents/MacOS/Unity"
 EDITOR="$STANDARD_ROOT/$VERSION/Unity.app/Contents/MacOS/Unity"
-ANDROID="$STANDARD_ROOT/$VERSION/Unity.app/Contents/PlaybackEngines/AndroidPlayer"
+ANDROID="$STANDARD_ROOT/$VERSION/PlaybackEngines/AndroidPlayer"
 
 printf '%s\n' 'SIMPLE_CI_PHASE=unity_cli_bootstrap_start'
 mkdir -p "$CLI_HOME" "$WRITABLE_ROOT"
@@ -138,7 +138,7 @@ test -x "$LOCAL_EDITOR" || {
 
 # Android was requested by the same Editor install command. Check the real
 # payload before attempting any secondary operation.
-LOCAL_ANDROID="$EDITOR_DIR/Unity.app/Contents/PlaybackEngines/AndroidPlayer"
+LOCAL_ANDROID="$EDITOR_DIR/PlaybackEngines/AndroidPlayer"
 COMPONENT_REPORT="$SIMPLE_CI_LOG_DIR/unity-android-components.txt"
 
 # Return nonzero on any missing directory. Write only fixed component names,
@@ -209,7 +209,7 @@ if ! check_android_components "final"; then
   # archive. This reveals whether modules were installed in another tree,
   # without dumping unrelated filesystem contents or publishing file paths.
   {
-    printf 'expected-layout: Unity.app/Contents/PlaybackEngines/AndroidPlayer\n'
+    printf 'expected-layout: PlaybackEngines/AndroidPlayer\n'
     printf 'editor-version=%s\n' "$VERSION"
     # Restrict inspection to the CLI's own temporary install root. Includes
     # alternate version directories, should the CLI select one unexpectedly.
