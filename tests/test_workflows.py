@@ -171,6 +171,24 @@ class WorkflowSecurityTests(unittest.TestCase):
             android.index("Build privately and retain diagnostics"),
         )
 
+    def test_android_gameci_dual_build_activation_project_is_preserved(self):
+        android = self.read("android.yml")
+        self.assertIn("fix-gameci-macos-activation-project.py", android)
+        self.assertIn("gameci-activation-project-fix.log", android)
+        self.assertLess(
+            android.index("Install GameCI CLI privately"),
+            android.index("Preserve GameCI activation project across APK and AAB"),
+        )
+        self.assertLess(
+            android.index("Preserve GameCI activation project across APK and AAB"),
+            android.index("Preinstall Unity Editor"),
+        )
+        self.assertLess(
+            android.index("Preserve GameCI activation project across APK and AAB"),
+            android.index("Unseal CI implementation"),
+        )
+        self.assertNotIn("fix-gameci-macos-activation-project.py", self.read("ios.yml"))
+
     def test_android_outputs_are_separately_encrypted(self):
         text = self.read("android.yml")
         self.assertIn("android-apk-sealed-", text)
