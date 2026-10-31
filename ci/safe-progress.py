@@ -393,6 +393,10 @@ def run():
     if code == 0:
         notice("Build command completed successfully")
     else:
+        # GameCI v0.1.48 labels an invalid BlankProject path as a license
+        # activation error. Report the proven project-path cause, not both.
+        if "Unity project path" in failures:
+            failures.discard("License")
         labels = ", ".join(label for label, _ in FAILURE_MARKERS if label in failures) or "Unclassified failure"
         print("::error title=Simple CI build::Build failed (" + labels + "); inspect encrypted diagnostics.", flush=True)
     return code if code >= 0 else 128 + abs(code)
