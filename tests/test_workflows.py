@@ -158,6 +158,19 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertNotIn("unity install", probe)
         self.assertNotIn("brew install", probe)
 
+    def test_gameci_result_compatibility_patch_runs_before_checkout(self):
+        android = self.read("android.yml")
+        self.assertIn("fix-sealed-macos-gameci-result.py", android)
+        self.assertIn("gameci-result-fix.log", android)
+        self.assertLess(
+            android.index("fix-sealed-macos-gameci-result.py"),
+            android.index("Generate read-only source token"),
+        )
+        self.assertLess(
+            android.index("fix-sealed-macos-gameci-result.py"),
+            android.index("Build privately and retain diagnostics"),
+        )
+
     def test_android_outputs_are_separately_encrypted(self):
         text = self.read("android.yml")
         self.assertIn("android-apk-sealed-", text)
