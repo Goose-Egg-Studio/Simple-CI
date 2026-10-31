@@ -53,6 +53,20 @@ class ProgressTests(unittest.TestCase):
         self.assertIn("PRIVATE_MODULE_INSTALL_OUTPUT", private)
         self.assertNotIn("PRIVATE_MODULE_INSTALL_OUTPUT", process.stdout)
 
+    def test_invalid_project_path_is_not_misreported_as_license_failure(self):
+        process, private = self.invoke(
+            "android",
+            "import sys; "
+            "print(\"Couldn't set project path to:\", flush=True); "
+            "print('Unclassified error occured while trying to activate license.', flush=True); "
+            "sys.exit(1)",
+        )
+        self.assertEqual(process.returncode, 1)
+        self.assertIn("Build failed (Unity project path)", process.stdout)
+        self.assertNotIn("Build failed (License)", process.stdout)
+        self.assertIn("Couldn't set project path to:", private)
+        self.assertNotIn("Couldn't set project path to:", process.stdout)
+
     def test_ios_silences_raw_errors_but_preserves_exit(self):
         process, private = self.invoke(
             "ios",
