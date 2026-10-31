@@ -326,7 +326,7 @@ jobs:
           done
           test -x "$(command -v age)" || { echo 'Encryption tool unavailable'; exit 1; }
           python3 ci/ci/seal-android.py --kind logs |
-            age -r "$(cat ci/ci/artifact-recipient.txt)" -o "encrypted/android-logs-${{ github.run_id }}.tar.gz.age"
+            age -r "$(cat ci/ci/log-recipient.txt)" -o "encrypted/android-logs-${{ github.run_id }}.tar.gz.age"
           test -s "encrypted/android-logs-${{ github.run_id }}.tar.gz.age"
           echo 'Private diagnostics encrypted separately.'
 
