@@ -70,6 +70,7 @@ EDITOR_PHASES = (
 FAILURE_MARKERS = (
     ("Unity CLI install", (b"SIMPLE_CI_PHASE=unity_cli_invalid_arguments", b"SIMPLE_CI_PHASE=unity_cli_release_unavailable", b"SIMPLE_CI_PHASE=unity_cli_elevation_failure", b"SIMPLE_CI_PHASE=unity_cli_install_failed", b"SIMPLE_CI_PHASE=unity_cli_elevation_unavailable", b"SIMPLE_CI_PHASE=unity_cli_path_failure", b"SIMPLE_CI_PHASE=unity_cli_download_directory_unsupported")),
     ("Unity Android components", (b"SIMPLE_CI_PHASE=unity_cli_android_payload_absent", b"SIMPLE_CI_PHASE=unity_cli_android_player_missing", b"SIMPLE_CI_PHASE=unity_cli_android_sdk_missing", b"SIMPLE_CI_PHASE=unity_cli_android_ndk_missing", b"SIMPLE_CI_PHASE=unity_cli_android_openjdk_missing")),
+    ("Unity project path", (b"Couldn't set project path to:",)),
     ("License", (b"Unclassified error occured while trying to activate license", b"License activation has failed")),
     ("C# compiler", (b"error CS",)),
     ("Android signing", (b"Unable to sign the application; please provide passwords!", b"Can not sign the application")),
