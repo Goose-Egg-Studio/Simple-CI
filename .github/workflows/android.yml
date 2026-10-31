@@ -154,6 +154,7 @@ jobs:
           test -x "$RUNNER_TEMP/secure-ci/scripts/mac-build-android.sh"
           test -s "$RUNNER_TEMP/secure-ci/scripts/SimpleCISealedMacAndroid.cs"
           python3 ci/ci/fix-sealed-macos-addressables.py --path "$RUNNER_TEMP/secure-ci/scripts/SimpleCISealedMacAndroid.cs" > "$RUNNER_TEMP/simple-private-logs/addressables-namespace-fix.log" 2>&1 || { echo "Addressables CI helper check failed; see encrypted diagnostics"; exit 1; }
+          python3 ci/ci/fix-sealed-macos-gameci-result.py --path "$RUNNER_TEMP/secure-ci/scripts/SimpleCISealedMacAndroid.cs" > "$RUNNER_TEMP/simple-private-logs/gameci-result-fix.log" 2>&1 || { echo "GameCI verified-player result check failed; see encrypted diagnostics"; exit 1; }
 
       - name: Generate read-only source token
         id: source-token
