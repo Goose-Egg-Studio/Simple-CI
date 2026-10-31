@@ -40,6 +40,14 @@ tar -tzf android-logs.tar.gz
 
 为了避免重复消耗 120 分钟，在识别到 `Unity C# compilation observed` 后，若 **60 分钟内没有任何新的可识别构建阶段**，Watchdog 会封存已有诊断并退出；若 stdout、Unity CPU 与 Editor.log 都没有活动，则 30 分钟即可退出。持续静默 10 分钟时提前采集一次仅放入 age 日志包的 Editor/线程采样。该诊断超时不代表 Unity 必然死锁，也不替代编译错误、资源完整性及实机验证。
 
+## Android Run #36：Unity 构建成功但 GameCI 误判失败
+
+[Run #36](https://github.com/Goose-Egg-Studio/Simple-CI/actions/runs/41173204593) 的临时日志密钥解密结果显示：Unity 生成约 690 MiB 的 `Game.apk`，并输出 `SIMPLE_CI_ADDRESSABLES_VERIFIED`、`Build Finished, Result: Success.`、`SIMPLE_CI_PLAYER_VERIFIED`，Unity batchmode 正常退出。由于 GameCI CLI v0.1.48 的 macOS 原生校验器只接受字面 `Build succeeded!` 或符合格式的 `Build results` 统计块，而实际 wrapper 只输出 `Build succeeded`（无叹号），其 `UnityBuildValidation.validateBuild` 报错，导致最终工作流误判为失败。证据来自 [GameCI v0.1.48 源码](https://github.com/game-ci/cli/blob/v0.1.48/src/model/unity/build-validation/unity-build-validation.ts)。
+
+新增 `ci/fix-sealed-macos-gameci-result.py`：**只修改 Runner 解密后的临时 C# helper**，并且只在原本表示 Player 已验证成功的 `Debug.Log("SIMPLE_CI_PLAYER_VERIFIED")` 中增加字面 `Build succeeded!`，保留原有阶段标志。不覆盖 GameCI 退出码，不对不成功的 Unity 构建打印成功，失败分支也不被修改。源文件布局、日志所在行或目标路径不匹配时 fail-closed。修改前原始 `.age` 包及私有 Unity 源码不受影响。
+
+该修复的 unit tests 和公开脚本安全审计通过；**仍需完整真实构建验证** APK/AAB 的密封上传和 Android 设备上的音乐、资源、交互。Run #36 的 690 MiB APK 只存在于已销毁的临时 Runner，不会自动出现在该失败 Run 的 Artifact 中；失败 Run 上传的只有加密诊断。
+
 ## 未完成的安全硬化
 
 **两套工作流已实际接入** `ci/safe-extract.py`：Android 的公共脚本包与 macOS 附加包、iOS 的公共脚本包均先校验成员再解压，拒绝绝对路径、`..`、链接、特殊文件及过大的文件和文件数。相关回归测试位于 `tests/`，由无 Secrets 的 `Public CI safety checks` 工作流执行。GitHub 官方 Actions 已固定到核验过的 Commit SHA；Android 第三方 Unity CLI 安装安排在私有脚本、源码及 GitHub App Token 获取之前。
