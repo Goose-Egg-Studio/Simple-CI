@@ -143,6 +143,47 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertIn("android-logs-sealed-", text)
         self.assertIn("ci/ci/artifact-recipient.txt", text)
 
+    def test_temporary_log_key_is_public_only_and_separate_from_products(self):
+        android, ios = self.read("android.yml"), self.read("ios.yml")
+        log_recipient = (ROOT / "ci" / "log-recipient.txt").read_text(
+            encoding="utf-8"
+        ).strip()
+        product_recipient = (ROOT / "ci" / "artifact-recipient.txt").read_text(
+            encoding="utf-8"
+        ).strip()
+        source_recipient = (ROOT / "ci" / "recipient.txt").read_text(
+            encoding="utf-8"
+        ).strip()
+        self.assertRegex(log_recipient, r"^age1[0-9a-z]+$")
+        self.assertNotIn("AGE-SECRET-KEY", log_recipient)
+        self.assertNotEqual(log_recipient, product_recipient)
+        self.assertNotEqual(log_recipient, source_recipient)
+
+        for kind in ("apk", "aab"):
+            self.assertRegex(
+                android,
+                r"python3 ci/ci/seal-android.py --kind " + kind +
+                r" \\|\\s*age -r \"\\$\\(cat ci/ci/artifact-recipient\\.txt\\)\"",
+            )
+        self.assertRegex(
+            android,
+            r"python3 ci/ci/seal-android.py --kind logs \\|\\s*"
+            r"age -r \"\\$\\(cat ci/ci/log-recipient\\.txt\\)\"",
+        )
+
+        self.assertIn("ios-logs-sealed-", ios)
+        self.assertIn("ios-sealed-", ios)
+        self.assertRegex(
+            ios,
+            r"python3 ci/ci/seal-android.py --kind logs \\|\\s*"
+            r"age -r \"\\$\\(cat ci/ci/log-recipient\\.txt\\)\"",
+        )
+        self.assertIn('age -r "$(cat ci/ci/artifact-recipient.txt)"', ios)
+        self.assertNotIn("tf.add(logs, arcname='private-logs')", ios)
+        self.assertIn("tf.add(artifacts, arcname='build-outputs')", ios)
+        self.assertIn("steps.seal_ios_logs.outcome == 'success'", ios)
+        self.assertIn("steps.seal_ios_outputs.outputs.sealed == 'true'", ios)
+
     def test_audit_workflow_has_no_secret_dependency(self):
         text = self.read("ci-audit.yml")
         self.assertNotIn("secrets.", text)
