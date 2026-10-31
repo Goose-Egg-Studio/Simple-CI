@@ -153,6 +153,7 @@ jobs:
           python3 ci/ci/safe-extract.py --archive "$MAC_TMP" --destination "$RUNNER_TEMP/secure-ci" > "$RUNNER_TEMP/simple-private-logs/macos-extract.log" 2>&1 || { echo 'macOS build implementation could not be extracted'; exit 1; }
           test -x "$RUNNER_TEMP/secure-ci/scripts/mac-build-android.sh"
           test -s "$RUNNER_TEMP/secure-ci/scripts/SimpleCISealedMacAndroid.cs"
+          python3 ci/ci/fix-sealed-macos-addressables.py --path "$RUNNER_TEMP/secure-ci/scripts/SimpleCISealedMacAndroid.cs" > "$RUNNER_TEMP/simple-private-logs/addressables-namespace-fix.log" 2>&1 || { echo "Addressables CI helper check failed; see encrypted diagnostics"; exit 1; }
 
       - name: Generate read-only source token
         id: source-token
