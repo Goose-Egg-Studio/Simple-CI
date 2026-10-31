@@ -125,6 +125,7 @@ class WorkflowSecurityTests(unittest.TestCase):
         android = self.read("android.yml")
         self.assertIn("--max-no-output 1800", android)
         self.assertIn("--diagnose-after 600", android)
+        self.assertIn("--max-no-phase 3600", android)
         self.assertIn("--max-no-output 2700", android)  # independent CLI install
         monitor = (ROOT / "ci" / "safe-progress.py").read_text(encoding="utf-8")
         self.assertIn("unity_health.unity_log_stamps()", monitor)
