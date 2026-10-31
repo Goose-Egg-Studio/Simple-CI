@@ -36,6 +36,10 @@ tar -tzf android-logs.tar.gz
 
 **日志可能包含源码路径、访问令牌、Unity 许可证数据或签名信息；单独日志密钥并不自动保证日志脱敏。** 请把临时密钥视为敏感凭据，不要将其明文写入 GitHub、公开 Issue 或 Actions 日志，调试结束后轮换日志密钥与历史产物的访问权限。
 
+## 当前 Android 卡顿诊断参数
+
+为了避免重复消耗 120 分钟，在识别到 `Unity C# compilation observed` 后，若 **60 分钟内没有任何新的可识别构建阶段**，Watchdog 会封存已有诊断并退出；若 stdout、Unity CPU 与 Editor.log 都没有活动，则 30 分钟即可退出。持续静默 10 分钟时提前采集一次仅放入 age 日志包的 Editor/线程采样。该诊断超时不代表 Unity 必然死锁，也不替代编译错误、资源完整性及实机验证。
+
 ## 未完成的安全硬化
 
 **两套工作流已实际接入** `ci/safe-extract.py`：Android 的公共脚本包与 macOS 附加包、iOS 的公共脚本包均先校验成员再解压，拒绝绝对路径、`..`、链接、特殊文件及过大的文件和文件数。相关回归测试位于 `tests/`，由无 Secrets 的 `Public CI safety checks` 工作流执行。GitHub 官方 Actions 已固定到核验过的 Commit SHA；Android 第三方 Unity CLI 安装安排在私有脚本、源码及 GitHub App Token 获取之前。
