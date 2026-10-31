@@ -94,7 +94,31 @@ Android 工作流 `.github/workflows/android.yml` 使用 **`macos-26-intel`**（
 - Android 成功构建将上传 **3 个相互独立的 age 加密压缩 Artifact**：`android-apk-sealed-<run_id>`、`android-aab-sealed-<run_id>`、`android-logs-sealed-<run_id>`。每个 Artifact 只包含一个 `.tar.gz.age`，分别是 `Simple.apk`、`Simple.aab`、`private-logs/`。失败时不会发布不完整 APK/AAB，但仍尽力上传独立的加密诊断包。
 
 
-### 2026-10-31：Android 完整构建进入脚本编译后长期沉默的诊断
+### 2026-10-31：Run #34 线程采样确认 macOS 26 IconServices 卡死
+
+[Android Run #34](https://github.com/Goose-Egg-Studio/Simple-CI/actions/runs/41155488188) 在 Unity 初始化项目时持续静默，最终被 60 分钟无新阶段 Watchdog 终止。使用独立日志 age 密钥解密其私有诊断，**对比了控制台静默约 10 分钟和 Watchdog 终止前的两份 macOS `sample`**；两份采样中的 Unity 主线程均是：
+
+```text
+EditorMain → NoGraphicsMain → Application::InitializeProject
+  → InitialRefreshV2 → AssetImportWorker::Import
+  → GenerateDefaultImporterAssets → ImageForIconForExtension
+  → NSWorkspace.iconForFileType / NSImage
+  → IconServices → synchronous NSXPC wait
+```
+
+构建平台为 macOS **26.6.1 (25G76)**、Intel。与 GitHub Actions 官方 Runner 镜像已知问题 [actions/runner-images#14751](https://github.com/actions/runner-images/issues/14751) **完全对应**：虚拟机上的 `iconservicesagent` 因 Metal 断言反复崩溃，系统文件类型图标请求停在 XPC 同步等待中，Unity `-batchmode` 资源导入进程因此看起来存活、CPU 仍有轻微活动，但没有实际推进。此前按“C# 编译”阶段推断原因是错误的：该阶段仅是最后一个被监控识别的控制台标记。
+
+**已添加无密钥、无 Unity 的前置验证与有界恢复：**
+
+- `ci/probe-macos-iconservices.swift` 直接调用 `NSWorkspace.shared.icon(forFileType: "txt")` 和 `tiffRepresentation`，复现 Unity 的卡点；`ci/preflight-iconservices-macos.py` 在 macOS 26 上用 12 秒超时执行该探针。
+- 只有真实图标请求失败或超时，才对**当前临时 Runner 用户的 GUI launchd 服务**尝试 `launchctl bootout gui/$UID/com.apple.iconservices.iconservicesagent` 和 `launchctl disable gui/$UID/com.apple.iconservices.iconservicesagent`。命令与输出保存在私有诊断中，未使用 sudo，也未修改全局系统服务。
+- 恢复后**必须再次成功运行相同 Swift 图标探针**；否则立即停止构建，不浪费 Unity 安装和编译时间。探针编译、运行和 launchctl 都有独立超时。
+- Android、iOS 两套工作流在安装 Unity、解密 CI 实现和检出私有源之前运行该前置检查。新增独立的 [macOS 26 IconServices preflight](https://github.com/Goose-Egg-Studio/Simple-CI/actions/workflows/macos-iconservices-preflight.yml)，在真实 Intel Runner 上复现、验证修复，但不下载 Unity、使用任何 Secrets 或构建产物。
+- `tests/test_iconservices.py` 模拟正常系统、超时、恢复成功/失败和旧 macOS 不触碰系统服务；`tests/test_workflows.py` 防止以后把前置检查移回下载安装之后。
+
+此修复适用于 GitHub 临时 Runner 的 macOS 26 环境，不建议无条件复制到开发者自己的日常 macOS 设备。**只有 macOS 探针通过，才进入正常 Unity 构建；还需真实构建验证 APK/AAB 音频与 Addressables 完整性。**
+
+## 2026-10-31：Android 完整构建进入脚本编译后长期沉默的诊断
 
 GitHub Actions [Android Run #32](https://github.com/Goose-Egg-Studio/Simple-CI/actions/runs/41063387181) 已在 **2026-10-30 13:33 UTC** 成功完成 Unity Editor、Android SDK/NDK/OpenJDK 安装及 GameCI 兼容路径校验，随后完成解密、私有源码检出和版本检查。**构建阶段本身**在 13:37:51 UTC 启动；公开日志最后依次识别到许可证激活请求、Package Manager 解析完成、Asset Import 开始、C# 脚本编译请求（13:38:46 UTC），之后没有新的被识别构建阶段。Unity Editor 进程一直存在，但 Watchdog 在 14:32:05 UTC 报告连续 45 分钟未观察到 stdout/大块磁盘写入并终止构建。最终诊断产物 `android-logs-sealed-41063387181` **已成功加密上传**，不能把这次失败归结于安装器。
 
