@@ -1,0 +1,38 @@
+name: macOS 26 IconServices preflight (no Unity)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "ci/preflight-iconservices-macos.py"
+      - "ci/probe-macos-iconservices.swift"
+      - "tests/test_iconservices.py"
+      - ".github/workflows/macos-iconservices-preflight.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  icon-service:
+    runs-on: macos-26-intel
+    timeout-minutes: 10
+    steps:
+      - name: Checkout public probe only
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Reproduce and mitigate macOS file-icon request
+        shell: bash
+        env:
+          SIMPLE_CI_LOG_DIR: ${{ runner.temp }}/simple-private-logs
+        run: |
+          set -euo pipefail
+          umask 077
+          python3 ci/preflight-iconservices-macos.py
+          # The script proceeds only if an NSWorkspace icon rendering
+          # request returned successfully, with or without the workaround.
+          grep -Eq '(initial-probe=passed|post-mitigation-probe=passed)' \
+            "$SIMPLE_CI_LOG_DIR/iconservices-preflight-status.txt"
+          echo "macOS 26 file-icon API verified without downloading Unity."
