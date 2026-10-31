@@ -78,6 +78,19 @@ jobs:
 
       # Install the external GameCI tool before placing decrypted CI code,
       # application source or any App token on this runner filesystem.
+      # macOS 26 Intel runner images can crash-loop iconservicesagent during
+      # a file-icon request. This reproduces Unity's NSWorkspace call, applies
+      # only a temporary per-user workaround on failure, and verifies it.
+      # Do this BEFORE any expensive Unity download and private source checkout.
+      - name: Verify macOS 26 IconServices before Unity
+        shell: bash
+        env:
+          SIMPLE_CI_LOG_DIR: ${{ runner.temp }}/simple-private-logs
+        run: |
+          set -euo pipefail
+          umask 077
+          python3 ci/ci/preflight-iconservices-macos.py
+
       - name: Install GameCI CLI privately (pinned installer)
         shell: bash
         run: |
