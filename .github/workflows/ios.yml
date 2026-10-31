@@ -194,42 +194,76 @@ jobs:
             exit 1
           fi
 
-      # Always upload an encrypted bundle, even if source checkout or Unity fails.
-      # A hard runner shutdown, cancellation, or inability to install age is not recoverable.
-      - name: Encrypt outputs and private logs (success or failure)
-        if: always()
-        id: seal
+      # Seal diagnostics independently, even when Unity/checkout fails.
+      # Logs use a separate age recipient; never mix them into IPA outputs.
+      - name: Seal iOS diagnostics to temporary log recipient
+        if: ${{ always() }}
+        id: seal_ios_logs
         shell: bash
         run: |
           set -euo pipefail
           umask 077
           mkdir -p "$RUNNER_TEMP/simple-private-logs" encrypted
           printf 'Finalizer started; job status: %s\n' "${{ job.status }}" >> "$RUNNER_TEMP/simple-private-logs/build-status.txt"
-          test -x "$(command -v age)" || { echo 'artifact encryption tool unavailable'; exit 1; }
-          # Capture Unity's persistent Editor.log, if it exists, inside the encrypted bundle.
+          test -x "$(command -v age)" || { echo 'log encryption unavailable'; exit 1; }
           for f in "$HOME/Library/Logs/Unity/Editor.log" "$HOME/.config/unity3d/Editor.log"; do
-            if [ -f "$f" ]; then cp "$f" "$RUNNER_TEMP/simple-private-logs/editor.log"; fi
+            if [ -f "$f" ] && [ ! -L "$f" ]; then
+              cp "$f" "$RUNNER_TEMP/simple-private-logs/editor.log" 2>/dev/null || true
+            fi
           done
-          python3 - <<'PY_TAR' | age -r "$(cat ci/ci/artifact-recipient.txt)" -o "encrypted/ios-${{ github.run_id }}.tar.age"
-          import os, sys, tarfile
-          home = os.environ['RUNNER_TEMP']
-          workspace = os.environ['GITHUB_WORKSPACE']
-          logs = os.path.join(home, 'simple-private-logs')
-          artifacts = os.path.join(workspace, 'dist')
-          with tarfile.open(fileobj=sys.stdout.buffer, mode='w|') as tf:
-              tf.add(logs, arcname='private-logs')
-              if os.path.isdir(artifacts):
-                  tf.add(artifacts, arcname='build-outputs')
-          PY_TAR
-          test -s "encrypted/ios-${{ github.run_id }}.tar.age" || exit 1
-          echo 'Encrypted diagnostics and available outputs sealed.'
+          python3 ci/ci/seal-android.py --kind logs |
+            age -r "$(cat ci/ci/log-recipient.txt)" -o "encrypted/ios-logs-${{ github.run_id }}.tar.gz.age"
+          test -s "encrypted/ios-logs-${{ github.run_id }}.tar.gz.age"
+          echo 'iOS private diagnostics age-encrypted separately.'
 
-      - name: Upload encrypted package only
-        if: always() && steps.seal.outcome == 'success'
+      - name: Upload sealed iOS diagnostics only
+        if: ${{ always() && steps.seal_ios_logs.outcome == 'success' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ios-sealed-${{ github.run_id }}
-          path: encrypted/*.tar.age
+          name: ios-logs-sealed-${{ github.run_id }}
+          path: encrypted/ios-logs-${{ github.run_id }}.tar.gz.age
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
+
+      # Existing iOS build products retain their original age recipient.
+      # No logs are bundled with the outputs; failure with no dist is safe.
+      - name: Seal iOS outputs with unchanged artifact recipient
+        if: ${{ always() }}
+        id: seal_ios_outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p encrypted
+          if [[ ! -d dist ]]; then
+            echo 'No iOS build products staged.'
+            exit 0
+          fi
+          test -x "$(command -v age)" || { echo 'artifact encryption unavailable'; exit 1; }
+          python3 - <<'PY_TAR' |
+          age -r "$(cat ci/ci/artifact-recipient.txt)" -o "encrypted/ios-${{ github.run_id }}.tar.age"
+          import os, sys, tarfile
+          root = os.environ['GITHUB_WORKSPACE']
+          artifacts = os.path.join(root, 'dist')
+          with tarfile.open(fileobj=sys.stdout.buffer, mode='w|') as tf:
+              tf.add(artifacts, arcname='build-outputs')
+          PY_TAR
+          test -s "encrypted/ios-${{ github.run_id }}.tar.age"
+          echo 'sealed=true' >> "$GITHUB_OUTPUT"
+          echo 'iOS build products encrypted separately.'
+
+      - name: Upload sealed iOS outputs only
+        if: ${{ always() && steps.seal_ios_outputs.outputs.sealed == 'true' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ios-sealed-${{ github.run_id }}
+          path: encrypted/ios-${{ github.run_id }}.tar.age
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Clean up encrypted iOS staging
+        if: ${{ always() }}
+        shell: bash
+        run: rm -f encrypted/ios-*.tar.age encrypted/ios-logs-*.tar.gz.age
