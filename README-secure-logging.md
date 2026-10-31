@@ -48,6 +48,16 @@ tar -tzf android-logs.tar.gz
 
 该修复的 unit tests 和公开脚本安全审计通过；**仍需完整真实构建验证** APK/AAB 的密封上传和 Android 设备上的音乐、资源、交互。Run #36 的 690 MiB APK 只存在于已销毁的临时 Runner，不会自动出现在该失败 Run 的 Artifact 中；失败 Run 上传的只有加密诊断。
 
+## Android Run #37：APK 成功后 AAB 激活阶段项目路径失效
+
+[Run #37](https://github.com/Goose-Egg-Studio/Simple-CI/actions/runs/41181533837) 已完成 APK Player 构建，`SIMPLE_CI_PLAYER_VERIFIED | Build succeeded!` 与 `SIMPLE_CI_PHASE=android_apk_done` 均已记录，`Game.apk` 约 690 MiB。接下来的 AAB 立即失败，但不是 Unity 授权拒绝：日志在 LicensingClient 成功激活授权后输出 `Couldn't set project path to:`，而 GameCI 错误地归类为 `License`。
+
+已确认 [GameCI v0.1.48 macOS entrypoint](https://github.com/game-ci/cli/blob/v0.1.48/dist/platforms/mac/entrypoint.sh) 在第一个构建完成时执行 `rm -r "$ACTIVATE_LICENSE_PATH"`，删掉随 CLI 发布的 `dist/BlankProject`；第二次执行 `mkdir -p` 只能恢复空目录。空目录没有 `ProjectSettings/ProjectVersion.txt`，因此 Unity 在 AAB 的第二轮激活时无法接受 `-projectPath`。
+
+修复脚本 `ci/fix-gameci-macos-activation-project.py` 只修补临时 Runner 内**已安装的 GameCI v0.1.48 入口脚本**，保留正常构建完成后的 `BlankProject`，仍执行原来的许可证归还。修复前校验内置 `ProjectVersion.txt` 及预期清理语句数量；源文件版本不匹配、目录缺失或符号链接时直接退出，避免误修改上游未知版本。补丁还通过 `bash -n` 验证并保留入口脚本执行权限。
+
+这不是跳过许可证激活、也不是忽略失败退出码。AAB 仍将正常激活、构建及验证。此时 **AAB 未完成新的真实构建验证**；如果后续 AAB 成功，再分别校验与加密上传 APK、AAB，最后进行游戏音乐资源和操作的实机验证。
+
 ## 未完成的安全硬化
 
 **两套工作流已实际接入** `ci/safe-extract.py`：Android 的公共脚本包与 macOS 附加包、iOS 的公共脚本包均先校验成员再解压，拒绝绝对路径、`..`、链接、特殊文件及过大的文件和文件数。相关回归测试位于 `tests/`，由无 Secrets 的 `Public CI safety checks` 工作流执行。GitHub 官方 Actions 已固定到核验过的 Commit SHA；Android 第三方 Unity CLI 安装安排在私有脚本、源码及 GitHub App Token 获取之前。
