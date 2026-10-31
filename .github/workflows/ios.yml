@@ -241,8 +241,7 @@ jobs:
             exit 0
           fi
           test -x "$(command -v age)" || { echo 'artifact encryption unavailable'; exit 1; }
-          python3 - <<'PY_TAR' |
-          age -r "$(cat ci/ci/artifact-recipient.txt)" -o "encrypted/ios-${{ github.run_id }}.tar.age"
+          python3 - <<'PY_TAR' | age -r "$(cat ci/ci/artifact-recipient.txt)" -o "encrypted/ios-${{ github.run_id }}.tar.age"
           import os, sys, tarfile
           root = os.environ['GITHUB_WORKSPACE']
           artifacts = os.path.join(root, 'dist')
