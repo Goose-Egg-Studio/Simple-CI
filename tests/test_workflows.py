@@ -12,7 +12,7 @@ class WorkflowSecurityTests(unittest.TestCase):
         return (WORKFLOWS / name).read_text(encoding="utf-8")
 
     def test_all_public_actions_have_immutable_sha(self):
-        for filename in ("android.yml", "ios.yml", "ci-audit.yml", "macos-gameci-preflight.yml"):
+        for filename in ("android.yml", "ios.yml", "ci-audit.yml", "macos-gameci-preflight.yml", "macos-iconservices-preflight.yml"):
             text = self.read(filename)
             actions = re.findall(r"^\s*uses:\s*(actions/[^\s#]+)", text, re.M)
             self.assertTrue(actions, filename)
@@ -136,6 +136,27 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertIn("sample", snapshot)
         self.assertIn("simple-private-logs", snapshot)
         self.assertNotIn("print(raw.stdout", snapshot)
+
+    def test_macos26_iconservices_checked_before_unity_and_secrets(self):
+        for workflow in ("android.yml", "ios.yml"):
+            source = self.read(workflow)
+            self.assertIn("Verify macOS 26 IconServices before Unity", source)
+            self.assertIn("python3 ci/ci/preflight-iconservices-macos.py", source)
+            self.assertLess(
+                source.index("Verify macOS 26 IconServices before Unity"),
+                source.index("Install GameCI CLI privately"),
+            )
+            self.assertLess(
+                source.index("Verify macOS 26 IconServices before Unity"),
+                source.index("Unseal CI implementation"),
+            )
+        probe = self.read("macos-iconservices-preflight.yml")
+        self.assertIn("runs-on: macos-26-intel", probe)
+        self.assertIn("workflow_dispatch:", probe)
+        self.assertIn("preflight-iconservices-macos.py", probe)
+        self.assertNotIn("secrets.", probe)
+        self.assertNotIn("unity install", probe)
+        self.assertNotIn("brew install", probe)
 
     def test_android_outputs_are_separately_encrypted(self):
         text = self.read("android.yml")
