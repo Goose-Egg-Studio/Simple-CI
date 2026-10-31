@@ -4,7 +4,7 @@
 
 ## Android 产物
 
-Android 的 APK、AAB、诊断日志分别打包，并用 `ci/artifact-recipient.txt` 中的产物接收方公钥**独立 age 加密**。构建成功后预期出现：
+Android 的 APK、AAB、诊断日志分别打包：**APK/AAB 使用 `ci/artifact-recipient.txt`，日志单独使用临时 `ci/log-recipient.txt` 公钥**。构建成功后预期出现：
 
 - `android-apk-sealed-<run_id>`：`android-apk-<run_id>.tar.gz.age`
 - `android-aab-sealed-<run_id>`：`android-aab-<run_id>.tar.gz.age`
@@ -14,25 +14,27 @@ Android 的 APK、AAB、诊断日志分别打包，并用 `ci/artifact-recipient
 
 ## iOS 产物
 
-iOS 当前仍使用一个 `ios-<run_id>.tar.age` 加密包，其中可能包含 `private-logs/` 和已有的 `build-outputs/`；成功签名且上传 TestFlight 的行为由私有脚本负责。iOS 构建已通过 `safe-progress.py --platform ios` 接入安全心跳、Watchdog 和独立加密健康记录 `health-ios.jsonl`。
+iOS 现已拆分为 `ios-logs-sealed-<run_id>`（`ios-logs-<run_id>.tar.gz.age`，日志临时公钥）以及 `ios-sealed-<run_id>`（`ios-<run_id>.tar.age`，原有产物公钥，仅包含已有的 `build-outputs/`）。即使构建失败也尝试封存日志；如果没有 `dist` 目录则不上传输出包。成功签名及上传 TestFlight 的行为仍由私有脚本负责。iOS 构建已通过 `safe-progress.py --platform ios` 接入安全心跳、Watchdog 和独立加密健康记录 `health-ios.jsonl`。
 
 ## 日志保护边界
 
 - Unity / Xcode 的原始 stdout、stderr 仅进入 Runner 的私有临时目录，不直接发到公开 Actions 控制台。
 - Android 监控公开固定的阶段、心跳与失败类别，不公开文件名、源码、许可证及构建原始日志。
-- `ci/recipient.txt` 用于**私有 CI 实现**，`ci/artifact-recipient.txt` 用于**构建产物与日志**。二者是不同的 age 公钥。产物私钥不得放入 GitHub Secrets。
+- `ci/recipient.txt` 用于**解密 CI 实现**，`ci/artifact-recipient.txt` 用于**APK/AAB/iOS 构建产物**，`ci/log-recipient.txt` 仅用于**Android/iOS 私有诊断日志**。三把 age 公钥相互独立。日志临时私钥**绝不**提交公开仓库、写入工作流或存为 GitHub Secrets，产物私钥也不应交给排障人员。
 - Runner 中会出现运行时解密后的脚本与编译内容；这是 CI 执行所必需的。工作流的 branch/actor/environment 门禁需要持续维护。
 - 手动取消、Runner 崩溃、磁盘耗尽或 age/Artifact 服务不可用时，无法保证失败日志一定能成功封存。
 
-## 解密示例
+## 解密诊断包（仅限持有临时日志私钥的人）
 
 ```bash
-age -d -i artifact-age-key.txt -o android-logs.tar.gz android-logs-12345.tar.gz.age
+age -d -i log-age-key.txt -o android-logs.tar.gz android-logs-12345.tar.gz.age
 tar -tzf android-logs.tar.gz
-tar -xzf android-logs.tar.gz
+# 只在可信的临时工作目录查看，结束后安全清理
 ```
 
-只在可信设备解密；不要上传 age 私钥或未经脱敏的许可证、凭据日志。
+日志临时私钥由持有人独立保管；公开 CI 仅包含日志公钥。**更换日志公钥并不能重加密历史诊断文件**：切换前的 Run 仍需原产物私钥；切换后的诊断才能由新日志私钥解密。
+
+**日志可能包含源码路径、访问令牌、Unity 许可证数据或签名信息；单独日志密钥并不自动保证日志脱敏。** 请把临时密钥视为敏感凭据，不要将其明文写入 GitHub、公开 Issue 或 Actions 日志，调试结束后轮换日志密钥与历史产物的访问权限。
 
 ## 未完成的安全硬化
 
