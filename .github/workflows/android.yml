@@ -105,6 +105,22 @@ jobs:
           echo "$RUNNER_TEMP/game-ci/bin" >> "$GITHUB_PATH"
           echo 'GameCI CLI installed.'
 
+      # GameCI v0.1.48 deletes its bundled BlankProject after every native
+      # macOS build. AAB's second license activation then receives an empty
+      # directory and Unity reports "Couldn't set project path to:".
+      # Patch the installed public CLI only, before private code is loaded.
+      - name: Preserve GameCI activation project across APK and AAB
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          python3 ci/ci/fix-gameci-macos-activation-project.py \
+            > "$RUNNER_TEMP/simple-private-logs/gameci-activation-project-fix.log" 2>&1 || {
+            echo 'GameCI multi-build activation project check failed; see encrypted diagnostics.'
+            exit 1
+          }
+          echo 'GameCI macOS APK/AAB activation project reuse verified.'
+
       # Use Unity's standalone CLI, not the Hub's legacy headless downloader.
       # The existing sealed GameCI script will find this installed Editor at
       # the standard path and skip its own Unity Hub Editor install.
